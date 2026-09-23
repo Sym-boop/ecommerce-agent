@@ -1,3 +1,6 @@
 __pycache__/
 *.pyc
 *.pyo
+
+# 忽略 Python 虚拟环境目录（注意目录后面的斜杠）
+.venv/
