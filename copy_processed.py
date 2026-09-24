@@ -9,7 +9,7 @@ PROC_DIR.mkdir(exist_ok=True)
 out_list = []
 
 # 读取csv
-with open(RAW_DIR / "copy_sample.csv", "r", encoding="utf‑8") as f:
+with open(RAW_DIR / "copy_sample.csv", "r", encoding="utf-8-sig") as f:
     reader = csv.DictReader(f)
     for row in reader:
         title = row["title"].strip()
