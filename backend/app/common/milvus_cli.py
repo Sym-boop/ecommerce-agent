@@ -440,7 +440,6 @@ def delete(*args: Any, **kwargs: Any) -> dict[str, Any]:
     EMBEDDING_MODEL       Embedding 模型名，默认 bge-m3
 """
 
-from __future__ import annotations
 
 import hashlib
 import logging

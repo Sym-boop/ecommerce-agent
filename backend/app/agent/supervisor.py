@@ -1,66 +1,70 @@
 # ============================================
 # backend/app/agent/supervisor.py
 # 运营主控协调 Agent
-# 负责：接收运营目标 → 拆解子任务 → 调度 Copywriter / Pricing → 汇总结果
 # ============================================
 
 import sys
 from pathlib import Path
 
-# 把项目根目录加入 sys.path，保证能 import backend
 _ROOT = Path(__file__).resolve().parents[3]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
-    
+
 from typing import TypedDict, Optional, Any
 from backend.app.agent.pricing import pricing_node
+from backend.app.agent.copywriter import copywriter_node
+
 
 # ============================================
 # 一、接口定义：SupervisorState
 # ============================================
-from typing import TypedDict, Optional, Any
-
 class SupervisorState(TypedDict, total=False):
     # ---- 任务标识 ----
-    task_id: str                  # 任务唯一 ID
-    thread_id: str                # 会话 ID，用于 Checkpoint 和审批恢复
-    goal: str                     # 运营目标
+    task_id: str
+    thread_id: str
+    goal: str
 
     # ---- 子任务 ----
-    sub_tasks: list               # [{"type": "copywriter", "payload": {...}}, ...]
+    sub_tasks: list
 
-    # ---- 子图输入（由 Supervisor 填充） ----
-    product_info: dict            # 商品信息：sku, name, price, description
-    platform: str                 # 目标平台：小红书/TikTok/亚马逊
-    sku: str                      # 商品 SKU
-    our_price: float              # 自身价格
+    # ---- 子图输入 ----
+    product_info: dict
+    platform: str
+    sku: str
+    our_price: float
 
-    # ---- 子图输出（统一放 results） ----
-    results: dict                 # {"copywriter": {...}, "pricing": {...}}
-    copy_result: str              # 兼容旧字段，可保留
-    price_result: dict            # 兼容旧字段，可保留
+    # ---- Copywriter 需要的字段 ----
+    product_name: str
+    product_sell_points: list
+    product_category: str
+    language: str
+    reference_count: int
+    forbidden_hit: list
+    reference_snippets: list
+
+    # ---- 子图输出 ----
+    results: dict
+    copy_result: Any
+    price_result: dict
 
     # ---- 审批与熔断 ----
-    approval_required: bool       # 是否需要人工审批
-    approval_status: str          # pending / approved / rejected
-    approval_reason: str          # 为什么触发审批
+    approval_required: bool
+    approval_status: str
+    approval_reason: str
 
     # ---- 执行状态 ----
-    status: str                   # pending / running / done / failed / waiting_approval
+    status: str
     error: Optional[str]
-    retry_count: int              # 重试次数
-    metadata: dict                # 其他扩展信息
+    retry_count: int
+    metadata: dict
 
 
 # ============================================
-# 二、Mock 实现（等 D/E 完成后替换）
+# 二、子 Agent 调用封装
 # ============================================
-def mock_copywriter(state: SupervisorState) -> dict:
-    """模拟文案生成，等 D 的 copywriter.py 完成后替换"""
-    return {
-        "copy_result": "【模拟文案】春日新品上市，法式碎花连衣裙，限时 8 折，点击链接抢购！",
-        "status": "done",
-    }
+def copywriter_task(state: SupervisorState) -> dict:
+    """调用真实 Copywriter Agent"""
+    return copywriter_node(state)
 
 
 def pricing_task(state: SupervisorState) -> dict:
@@ -94,24 +98,37 @@ def supervisor_node(state: SupervisorState) -> dict:
         return {"status": "failed", "error": f"无法识别目标类型：{goal}"}
 
     result = {"sub_tasks": sub_tasks, "status": "running"}
+    has_error = False
 
     for task in sub_tasks:
         if task["type"] == "copywriter":
-            # 等 D 完成后替换为：from backend.app.agent.copywriter import copywriter_node
-            result.update(mock_copywriter(state))
+            sub = copywriter_task(state)
         elif task["type"] == "pricing":
-            # 等 E 完成后替换为：from backend.app.agent.pricing import pricing_node
-            result.update(pricing_task(state))
+            sub = pricing_task(state)
+        else:
+            continue
 
-    result["status"] = "done"
+        if sub.get("status") == "failed":
+            has_error = True
+            result["error"] = sub.get("error", "子任务失败")
+
+        result.update(sub)
+
+    result["status"] = "failed" if has_error else "done"
     return result
 
 
 # ============================================
-# 四、独立运行测试（可选）
+# 四、独立运行测试
 # ============================================
 if __name__ == "__main__":
-    test_state = {"goal": "给新品连衣裙做一波小红书推广并调价"}
+    test_state = {
+        "goal": "给新品保温杯做一波小红书推广",
+        "product_name": "316不锈钢保温杯",
+        "product_sell_points": ["24小时保温", "轻便", "密封性好"],
+        "product_category": "水杯",
+        "platform": "xiaohongshu",
+    }
     output = supervisor_node(test_state)
     print("调度结果：")
     for k, v in output.items():
