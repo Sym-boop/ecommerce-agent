@@ -25,7 +25,15 @@ from dotenv import load_dotenv
 
 load_dotenv(_ROOT / ".env", override=True)
 
-from pymilvus import MilvusClient, DataType  # type: ignore
+# pymilvus 为可选依赖：未安装或无 Milvus 服务时自动降级为内存模式（仅用于开发调试）。
+# 顶层不直接 import，避免缺包时整个模块无法导入。
+try:
+    from pymilvus import MilvusClient, DataType  # type: ignore
+    _PYMILVUS_AVAILABLE = True
+except ImportError:
+    MilvusClient = None  # type: ignore
+    DataType = None  # type: ignore
+    _PYMILVUS_AVAILABLE = False
 
 
 class MilvusClientWrapper:
@@ -69,7 +77,9 @@ class MilvusClientWrapper:
     # 属性访问
     # ------------------------------------------------------------------
     @property
-    def client(self) -> MilvusClient:
+    def client(self) -> "MilvusClient":
+        if not _PYMILVUS_AVAILABLE:
+            raise RuntimeError("未安装 pymilvus（pip install pymilvus），Milvus 功能不可用，将使用内存模式")
         if self._client is None:
             kwargs: dict[str, Any] = {"uri": self._uri}
             if self._token:
@@ -148,7 +158,7 @@ class MilvusClientWrapper:
     def embed(self, texts: list[str]) -> list[list[float]]:
         if self._embedding_fn is None:
             raise RuntimeError(
-                "未配置可用 embedding 函数，请在 .env 中设置 DEEPSEEK_API_KEY / OPENAI_API_KEY，"
+                "未配置可用 embedding 函数，请在 .env 中设置 OPENAI_API_KEY，"
                 "或安装 langchain-huggingface"
             )
         batch_size = 100
@@ -225,18 +235,9 @@ class MilvusClientWrapper:
             return self._insert_memory(data)
 
     def _insert_memory(self, data: list[dict[str, Any]]) -> dict[str, Any]:
-        """内存 fallback：纯文本相似度检索，用于本地开发调试。"""
-        from sklearn.feature_extraction.text import TfidfVectorizer  # type: ignore
-        from sklearn.metrics.pairwise import cosine_similarity  # type: ignore
-
+        """内存 fallback：仅落盘到内存列表；相似度在 _search_memory 中现算（TF-IDF 不可用时退化为顺序返回）。"""
         for item in data:
             self._memory_docs.append(item)
-
-        if not hasattr(self, "_tfidf"):
-            texts = [d.get(self.TEXT_FIELD, "") for d in self._memory_docs]
-            self._tfidf = TfidfVectorizer(stop_words=None)
-            self._tfidf.fit(texts)
-
         return {"insert_count": len(data), "collection": self.COLLECTION, "mode": "memory"}
 
     # ------------------------------------------------------------------
