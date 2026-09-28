@@ -4,8 +4,16 @@
 # 负责：接收运营目标 → 拆解子任务 → 调度 Copywriter / Pricing → 汇总结果
 # ============================================
 
-from typing import TypedDict, Optional
+import sys
+from pathlib import Path
 
+# 把项目根目录加入 sys.path，保证能 import backend
+_ROOT = Path(__file__).resolve().parents[3]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+    
+from typing import TypedDict, Optional, Any
+from backend.app.agent.pricing import pricing_node
 
 # ============================================
 # 一、接口定义：SupervisorState
@@ -55,16 +63,9 @@ def mock_copywriter(state: SupervisorState) -> dict:
     }
 
 
-def mock_pricing(state: SupervisorState) -> dict:
-    """模拟定价建议，等 E 的 pricing.py 完成后替换"""
-    return {
-        "price_result": {
-            "action": "降价",
-            "confidence": 0.85,
-            "reason": "竞品近 3 天降价 5%，建议跟随降价 3% 保持竞争力",
-        },
-        "status": "done",
-    }
+def pricing_task(state: SupervisorState) -> dict:
+    """调用真实 Pricing Agent"""
+    return pricing_node(state)
 
 
 # ============================================
@@ -100,7 +101,7 @@ def supervisor_node(state: SupervisorState) -> dict:
             result.update(mock_copywriter(state))
         elif task["type"] == "pricing":
             # 等 E 完成后替换为：from backend.app.agent.pricing import pricing_node
-            result.update(mock_pricing(state))
+            result.update(pricing_task(state))
 
     result["status"] = "done"
     return result
