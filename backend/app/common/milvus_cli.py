@@ -82,48 +82,45 @@ class MilvusClientWrapper:
     # Embedding
     # ------------------------------------------------------------------
     def _load_embedding_fn(self):
-        """懒加载 embedding 函数，优先 DeepSeek，fallback 到 OpenAI，再 fallback 到 bge-m3。"""
-        # 1. DeepSeek embedding
-        ds_api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
-        if ds_api_key and not ds_api_key.startswith("sk-xxxx"):
+        # 1. 通用 OpenAI 兼容 embedding（优先）
+        emb_base = os.getenv("EMBEDDING_API_BASE", "").rstrip("/")
+        emb_key = os.getenv("EMBEDDING_API_KEY", "").strip()
+        emb_model = os.getenv("EMBEDDING_MODEL", "text-embedding-v4")
+        if emb_base and emb_key and not emb_key.startswith("sk-xxxx"):
             try:
-                import httpx  # noqa: PLC0415
+                import httpx
 
-                def _deepseek_embed(texts: list[str]) -> list[list[float]]:
-                    url = "https://api.deepseek.com/v1/embeddings"
+                def _api_embed(texts: list[str]) -> list[list[float]]:
+                    url = f"{emb_base}/embeddings"
                     headers = {
-                        "Authorization": f"Bearer {ds_api_key}",
+                        "Authorization": f"Bearer {emb_key}",
                         "Content-Type": "application/json",
                     }
-                    body = {
-                        "model": "deepseek-embedding",
-                        "input": texts,
-                        "encoding_format": "float",
-                    }
+                    body = {"model": emb_model, "input": texts, "encoding_format": "float"}
                     with httpx.Client(timeout=30.0) as c:
                         resp = c.post(url, headers=headers, json=body)
                         resp.raise_for_status()
                     data = resp.json()
                     items = data.get("data", [])
                     if not items:
-                        raise RuntimeError("DeepSeek embedding 返回空")
+                        raise RuntimeError("embedding API 返回空")
                     return [item["embedding"] for item in items]
 
-                return _deepseek_embed
+                return _api_embed
             except Exception:
                 pass
 
-        # 2. OpenAI embedding
+        # 2. OpenAI 官方
         openai_key = os.getenv("OPENAI_API_KEY", "").strip()
         openai_base = os.getenv("OPENAI_BASE_URL", "").rstrip("/")
         if openai_key and not openai_key.startswith("sk-xxxx"):
             try:
-                from openai import OpenAI  # type: ignore
+                from openai import OpenAI
 
                 def _openai_embed(texts: list[str]) -> list[list[float]]:
                     client = OpenAI(api_key=openai_key, base_url=openai_base or None)
                     resp = client.embeddings.create(
-                        model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
+                        model=emb_model,
                         input=texts,
                         encoding_format="float",
                     )
@@ -133,9 +130,9 @@ class MilvusClientWrapper:
             except Exception:
                 pass
 
-        # 3. BGE-M3 (本地 / langchain)
+        # 3. HuggingFace 本地
         try:
-            from langchain_huggingface import HuggingFaceEmbeddings  # type: ignore
+            from langchain_huggingface import HuggingFaceEmbeddings
 
             model_name = os.getenv("BGE_MODEL_NAME", "BAAI/bge-m3")
             hf_embed = HuggingFaceEmbeddings(model_name=model_name)
