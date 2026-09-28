@@ -1,0 +1,98 @@
+[
+  {
+    "id": "test-001",
+    "product_name": "316不锈钢保温杯 500ml",
+    "product_sell_points": ["24小时保温保冷", "316食品级不锈钢", "一键开盖防漏", "轻便便携仅280g"],
+    "product_category": "水杯",
+    "platform": "xiaohongshu",
+    "language": "zh-CN"
+  },
+  {
+    "id": "test-002",
+    "product_name": "无线蓝牙耳机 Pro",
+    "product_sell_points": ["主动降噪35dB", "40小时超长续航", "IPX5运动防水", "蓝牙5.3低延迟"],
+    "product_category": "蓝牙耳机",
+    "platform": "tiktok",
+    "language": "en-US"
+  },
+  {
+    "id": "test-003",
+    "product_name": "Organic Green Tea Extract Capsules",
+    "product_sell_points": ["100% Organic Certified", "500mg per serving", "60 capsules per bottle", "Vegan & Non-GMO"],
+    "product_category": "保健品",
+    "platform": "amazon",
+    "language": "en-US"
+  },
+  {
+    "id": "test-004",
+    "product_name": "记忆棉护颈枕头",
+    "product_sell_points": ["慢回弹记忆棉", "人体工学曲线设计", "透气孔散热", "可水洗外套"],
+    "product_category": "枕头",
+    "platform": "xiaohongshu",
+    "language": "zh-CN"
+  },
+  {
+    "id": "test-005",
+    "product_name": "便携空气净化器 车载",
+    "product_sell_points": ["HEPA H13滤网", "紫外线杀菌", "USB-C供电", "静音设计30dB"],
+    "product_category": "空气净化器",
+    "platform": "tiktok",
+    "language": "en-US"
+  },
+  {
+    "id": "test-006",
+    "product_name": "氨基酸洁面乳 120ml",
+    "product_sell_points": ["温和氨基酸配方", "深层清洁不拔干", "适合敏感肌", "无 Parabens"],
+    "product_category": "洗面奶",
+    "platform": "xiaohongshu",
+    "language": "zh-CN"
+  },
+  {
+    "id": "test-007",
+    "product_name": "Smart Watch Fitness Tracker",
+    "product_sell_points": ["Heart Rate & SpO2 Monitor", "7-Day Battery Life", "5ATM Water Resistant", "100+ Sport Modes"],
+    "product_category": "智能手表",
+    "platform": "amazon",
+    "language": "en-US"
+  },
+  {
+    "id": "test-008",
+    "product_name": "迷你筋膜枪 便携款",
+    "product_sell_points": ["6种按摩头", "6档力度调节", "静音设计45dB", "6小时续航"],
+    "product_category": "筋膜枪",
+    "platform": "tiktok",
+    "language": "en-US"
+  },
+  {
+    "id": "test-009",
+    "product_name": "空气炸锅 5.5L 触控版",
+    "product_sell_points": ["8种预设菜单", "80-200°C精准控温", "不粘涂层易清洗", "60分钟定时"],
+    "product_category": "空气炸锅",
+    "platform": "xiaohongshu",
+    "language": "zh-CN"
+  },
+  {
+    "id": "test-010",
+    "product_name": "LED Desk Lamp with USB Port",
+    "product_sell_points": ["Full Spectrum Eye-Care", "5 Color Temperatures", "5 Brightness Levels", "Touch Control + Memory"],
+    "product_category": "台灯",
+    "platform": "amazon",
+    "language": "en-US"
+  },
+  {
+    "id": "test-011",
+    "product_name": "真丝眼罩 睡眠款",
+    "product_sell_points": ["100% Mulberry Silk", "3D立体剪裁不压眼", "遮光率99%", "附赠收纳袋"],
+    "product_category": "眼罩",
+    "platform": "xiaohongshu",
+    "language": "zh-CN"
+  },
+  {
+    "id": "test-012",
+    "product_name": "Yoga Mat Non-Slip 8mm",
+    "product_sell_points": ["TPE环保材质", "双面防滑纹理", "8mm加厚护膝", "附送携带绑带"],
+    "product_category": "瑜伽垫",
+    "platform": "tiktok",
+    "language": "en-US"
+  }
+]

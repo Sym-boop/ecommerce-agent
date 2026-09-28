@@ -675,18 +675,3 @@ if __name__ == "__main__":
 
     pr = out["price_result"]
     print(pr.get("report") or "")
-    print()
-    print("--- Supervisor 兼容字段 ---")
-    print(
-        json.dumps(
-            {
-                "action": pr.get("action"),
-                "confidence": pr.get("confidence"),
-                "reason": pr.get("reason"),
-                "suggested_price": pr.get("suggested_price"),
-                "approval_required": out.get("approval_required"),
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-    )

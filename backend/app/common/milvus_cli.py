@@ -1,4 +1,402 @@
 
+"""
+Milvus 客户端封装：连接、插入、检索、删除
+供 copywriter.py / pricing.py 等 Agent 共同调用
+
+与 B 的 init_milvus.py 对齐：
+  - collection: knowledge_base
+  - vector 字段: vector (dim=1024)
+  - metadata: JSON 字段（存放 platform / category / original_title 等）
+  - 度量: COSINE
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+from pathlib import Path
+from typing import Any, Optional
+
+# 项目根目录
+_ROOT = Path(__file__).resolve().parents[3]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from dotenv import load_dotenv
+
+load_dotenv(_ROOT / ".env", override=True)
+
+from pymilvus import MilvusClient, DataType  # type: ignore
+
+
+class MilvusClientWrapper:
+    """
+    Milvus 客户端封装，提供 insert / search / delete 接口。
+    本机无 Milvus 服务时自动降级为内存模式（仅用于开发调试）。
+    """
+
+    COLLECTION = "knowledge_base"
+    VECTOR_FIELD = "vector"
+    PK_FIELD = "id"
+    TEXT_FIELD = "text"
+    META_FIELD = "metadata"
+    DEFAULT_DIMENSION = 1024  # 与 B 的 init_milvus.py 保持一致
+
+    def __init__(
+        self,
+        uri: Optional[str] = None,
+        token: Optional[str] = None,
+        dimension: int = DEFAULT_DIMENSION,
+    ):
+        self._uri = uri or os.getenv("MILVUS_URI", "http://192.168.26.129:19530")
+        self._token = token or os.getenv("MILVUS_TOKEN", "")
+        self._dim = dimension
+        self._client: Optional[MilvusClient] = None
+        self._embedding_fn = self._load_embedding_fn()
+        # 内存 fallback 存储（无 Milvus 服务时使用）
+        self._memory_docs: list[dict[str, Any]] = []
+        self._memory_available = False
+
+    # ------------------------------------------------------------------
+    # 属性访问
+    # ------------------------------------------------------------------
+    @property
+    def client(self) -> MilvusClient:
+        if self._client is None:
+            kwargs: dict[str, Any] = {"uri": self._uri}
+            if self._token:
+                kwargs["token"] = self._token
+            self._client = MilvusClient(**kwargs)
+        return self._client
+
+    # ------------------------------------------------------------------
+    # Embedding
+    # ------------------------------------------------------------------
+    def _load_embedding_fn(self):
+        """懒加载 embedding 函数，优先 DeepSeek，fallback 到 OpenAI，再 fallback 到 bge-m3。"""
+        # 1. DeepSeek embedding
+        ds_api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+        if ds_api_key and not ds_api_key.startswith("sk-xxxx"):
+            try:
+                import httpx  # noqa: PLC0415
+
+                def _deepseek_embed(texts: list[str]) -> list[list[float]]:
+                    url = "https://api.deepseek.com/v1/embeddings"
+                    headers = {
+                        "Authorization": f"Bearer {ds_api_key}",
+                        "Content-Type": "application/json",
+                    }
+                    body = {
+                        "model": "deepseek-embedding",
+                        "input": texts,
+                        "encoding_format": "float",
+                    }
+                    with httpx.Client(timeout=30.0) as c:
+                        resp = c.post(url, headers=headers, json=body)
+                        resp.raise_for_status()
+                    data = resp.json()
+                    items = data.get("data", [])
+                    if not items:
+                        raise RuntimeError("DeepSeek embedding 返回空")
+                    return [item["embedding"] for item in items]
+
+                return _deepseek_embed
+            except Exception:
+                pass
+
+        # 2. OpenAI embedding
+        openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+        openai_base = os.getenv("OPENAI_BASE_URL", "").rstrip("/")
+        if openai_key and not openai_key.startswith("sk-xxxx"):
+            try:
+                from openai import OpenAI  # type: ignore
+
+                def _openai_embed(texts: list[str]) -> list[list[float]]:
+                    client = OpenAI(api_key=openai_key, base_url=openai_base or None)
+                    resp = client.embeddings.create(
+                        model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
+                        input=texts,
+                        encoding_format="float",
+                    )
+                    return [d.embedding for d in resp.data]
+
+                return _openai_embed
+            except Exception:
+                pass
+
+        # 3. BGE-M3 (本地 / langchain)
+        try:
+            from langchain_huggingface import HuggingFaceEmbeddings  # type: ignore
+
+            model_name = os.getenv("BGE_MODEL_NAME", "BAAI/bge-m3")
+            hf_embed = HuggingFaceEmbeddings(model_name=model_name)
+
+            def _bge_embed(texts: list[str]) -> list[list[float]]:
+                return hf_embed.embed_documents(texts)
+
+            return _bge_embed
+        except Exception:
+            pass
+
+        return None
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        if self._embedding_fn is None:
+            raise RuntimeError(
+                "未配置可用 embedding 函数，请在 .env 中设置 DEEPSEEK_API_KEY / OPENAI_API_KEY，"
+                "或安装 langchain-huggingface"
+            )
+        batch_size = 100
+        results: list[list[float]] = []
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
+            results.extend(self._embedding_fn(batch))
+        return results
+
+    # ------------------------------------------------------------------
+    # Collection 管理
+    # ------------------------------------------------------------------
+    def ensure_collection(self, collection_name: Optional[str] = None) -> None:
+        """若 collection 不存在则创建（含向量索引）。"""
+        name = collection_name or self.COLLECTION
+        if self.client.has_collection(name):
+            return
+        schema = self.client.create_schema(enable_dynamic_field=True)
+        schema.add_field(self.PK_FIELD, DataType.INT64, is_primary=True)
+        schema.add_field(self.VECTOR_FIELD, DataType.FLOAT_VECTOR, dim=self._dim)
+        schema.add_field(self.TEXT_FIELD, DataType.VARCHAR, max_length=65535)
+
+        index_params = self.client.prepare_index_params()
+        index_params.add_index(
+            field_name=self.VECTOR_FIELD,
+            index_type="IVF_FLAT",
+            metric_type="COSINE",
+            params={"nlist": 128},
+        )
+        self.client.create_collection(
+            collection_name=name,
+            schema=schema,
+            index_params=index_params,
+        )
+
+    # ------------------------------------------------------------------
+    # 插入
+    # ------------------------------------------------------------------
+    def insert_data(
+        self,
+        data: list[dict[str, Any]],
+        collection_name: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """批量插入文档，自动调用 embedding。
+
+        data 每项应包含 text 字段，其余作为 metadata JSON 存入。
+        返回: {"insert_count": int, "collection": str, "mode": "milvus"|"memory"}
+        """
+        if not data:
+            return {"insert_count": 0, "collection": self.COLLECTION, "mode": "empty"}
+
+        name = collection_name or self.COLLECTION
+
+        # 尝试 Milvus；连接失败则降级到内存模式
+        try:
+            self.ensure_collection(name)
+            texts = [item[self.TEXT_FIELD] for item in data]
+            vectors = self.embed(texts)
+
+            payload: list[dict[str, Any]] = []
+            for i, item in enumerate(data):
+                meta = {k: v for k, v in item.items() if k not in (self.TEXT_FIELD, self.VECTOR_FIELD)}
+                payload.append({
+                    self.PK_FIELD: i,
+                    self.VECTOR_FIELD: vectors[i],
+                    self.TEXT_FIELD: item[self.TEXT_FIELD],
+                    self.META_FIELD: meta,
+                })
+
+            res = self.client.insert(collection_name=name, data=payload)
+            return {"insert_count": len(res.get("insert_count", 0)), "collection": name, "mode": "milvus"}
+        except Exception as exc:
+            print(f"[milvus_cli] Milvus 连接失败（{exc}），降级到内存模式", file=sys.stderr)
+            return self._insert_memory(data)
+
+    def _insert_memory(self, data: list[dict[str, Any]]) -> dict[str, Any]:
+        """内存 fallback：纯文本相似度检索，用于本地开发调试。"""
+        from sklearn.feature_extraction.text import TfidfVectorizer  # type: ignore
+        from sklearn.metrics.pairwise import cosine_similarity  # type: ignore
+
+        for item in data:
+            self._memory_docs.append(item)
+
+        if not hasattr(self, "_tfidf"):
+            texts = [d.get(self.TEXT_FIELD, "") for d in self._memory_docs]
+            self._tfidf = TfidfVectorizer(stop_words=None)
+            self._tfidf.fit(texts)
+
+        return {"insert_count": len(data), "collection": self.COLLECTION, "mode": "memory"}
+
+    # ------------------------------------------------------------------
+    # 检索
+    # ------------------------------------------------------------------
+    def search(
+        self,
+        query_text: str,
+        top_k: int = 5,
+        collection_name: Optional[str] = None,
+        filters: Optional[dict[str, Any]] = None,
+    ) -> list[dict[str, Any]]:
+        """基于 query_text 检索 Top-K 文档。
+        返回: [{"id": int, "text": str, "platform": str, "category": str, "score": float, ...}]
+        """
+        name = collection_name or self.COLLECTION
+
+        # 先尝试 Milvus 真实检索
+        try:
+            if not self.client.has_collection(name):
+                raise RuntimeError("collection 不存在")
+            query_vec = self.embed([query_text])[0]
+            expr = ""
+            if filters:
+                conditions = []
+                for k, v in filters.items():
+                    if isinstance(v, list):
+                        conditions.append(f'{k} in {json.dumps(v)}')
+                    else:
+                        conditions.append(f'{k} == "{v}"')
+                expr = " and ".join(conditions)
+
+            search_params = {"metric_type": "COSINE", "params": {"nprobe": 16}}
+            results = self.client.search(
+                collection_name=name,
+                data=[query_vec],
+                limit=top_k,
+                search_params=search_params,
+                expr=expr,
+                output_fields=[self.TEXT_FIELD, self.META_FIELD],
+            )
+            docs: list[dict[str, Any]] = []
+            for hits in results:
+                for hit in hits:
+                    meta = hit["entity"].get(self.META_FIELD, {})
+                    doc: dict[str, Any] = {
+                        "id": hit["id"],
+                        "score": hit["distance"],
+                        self.TEXT_FIELD: hit["entity"].get(self.TEXT_FIELD, ""),
+                        **meta,
+                    }
+                    docs.append(doc)
+            return docs
+        except Exception as exc:
+            print(f"[milvus_cli] Milvus 检索失败（{exc}），降级到内存模式", file=sys.stderr)
+            return self._search_memory(query_text, top_k=top_k, filters=filters)
+
+    def _search_memory(
+        self,
+        query_text: str,
+        top_k: int = 5,
+        filters: Optional[dict[str, Any]] = None,
+    ) -> list[dict[str, Any]]:
+        """内存 fallback 检索：TF-IDF + cosine similarity。"""
+        if not self._memory_docs:
+            return []
+
+        # 过滤
+        docs = self._memory_docs
+        if filters:
+            filtered = []
+            for d in docs:
+                match = True
+                for k, v in filters.items():
+                    dv = d.get(k, "")
+                    if isinstance(v, list):
+                        if dv not in v:
+                            match = False
+                            break
+                    elif str(dv) != str(v):
+                        match = False
+                        break
+                if match:
+                    filtered.append(d)
+            docs = filtered
+
+        if not docs:
+            return []
+
+        # TF-IDF 检索
+        try:
+            from sklearn.feature_extraction.text import TfidfVectorizer  # type: ignore
+            from sklearn.metrics.pairwise import cosine_similarity  # type: ignore
+
+            all_texts = [d.get(self.TEXT_FIELD, "") for d in docs] + [query_text]
+            tfidf = TfidfVectorizer(stop_words=None)
+            matrix = tfidf.fit_transform(all_texts)
+            query_idx = len(all_texts) - 1
+            sims = cosine_similarity(matrix[query_idx:query_idx+1], matrix[:query_idx]).flatten()
+
+            ranked = sorted(
+                enumerate(docs),
+                key=lambda x: sims[x[0]],
+                reverse=True,
+            )
+            return [
+                {**doc, "score": float(sims[i])}
+                for i, doc in ranked[:top_k]
+            ]
+        except Exception:
+            # 最终兜底：返回前 top_k 条
+            return [{"score": 0.0, **doc} for doc in docs[:top_k]]
+
+    # ------------------------------------------------------------------
+    # 删除
+    # ------------------------------------------------------------------
+    def delete(
+        self,
+        ids: list[int],
+        collection_name: Optional[str] = None,
+    ) -> dict[str, Any]:
+        name = collection_name or self.COLLECTION
+        if not ids:
+            return {"delete_count": 0}
+        expr = f"{self.PK_FIELD} in {ids}"
+        try:
+            res = self.client.delete(collection_name=name, filter=expr)
+            return {"delete_count": res.get("delete_count", 0)}
+        except Exception:
+            # 内存模式：按 id 过滤
+            before = len(self._memory_docs)
+            self._memory_docs = [d for i, d in enumerate(self._memory_docs) if i not in ids]
+            return {"delete_count": before - len(self._memory_docs)}
+
+    # ------------------------------------------------------------------
+    # 模块级便捷函数
+    # ------------------------------------------------------------------
+    def search_docs(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.search(*args, **kwargs)
+
+
+# 模块级单例
+_instance: Optional[MilvusClientWrapper] = None
+
+
+def _get_instance() -> MilvusClientWrapper:
+    global _instance
+    if _instance is None:
+        _instance = MilvusClientWrapper()
+    return _instance
+
+
+# 模块级兼容函数（旧调用方 milvus_cli.search(...) 等）
+def search(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+    return _get_instance().search(*args, **kwargs)
+
+
+def insert_data(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    return _get_instance().insert_data(*args, **kwargs)
+
+
+def delete(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    return _get_instance().delete(*args, **kwargs)
+
+
 
 """Milvus 客户端统一封装（成员B - 通用基础模块）
 
@@ -475,6 +873,4 @@ def check_banned_words(text: str, words: list[dict] | None = None) -> list[dict]
             })
             start = idx + len(word)
     return hits
-
-
 
