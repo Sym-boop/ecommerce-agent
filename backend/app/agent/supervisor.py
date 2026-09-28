@@ -4,6 +4,8 @@
 # ============================================
 
 import sys
+import uuid
+import logging
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -13,6 +15,8 @@ if str(_ROOT) not in sys.path:
 from typing import TypedDict, Optional, Any
 from backend.app.agent.pricing import pricing_node
 from backend.app.agent.copywriter import copywriter_node
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================
@@ -89,15 +93,39 @@ def supervisor_node(state: SupervisorState) -> dict:
     """
     主控节点：接收运营目标 → 拆解 → 调度子 Agent → 汇总结果
     """
+    # 1. 生成任务标识
+    if not state.get("task_id"):
+        state["task_id"] = str(uuid.uuid4())
+    if not state.get("thread_id"):
+        state["thread_id"] = state["task_id"]
+
     goal = state.get("goal", "")
     if not goal:
-        return {"status": "failed", "error": "goal 不能为空"}
+        return {
+            "task_id": state["task_id"],
+            "thread_id": state["thread_id"],
+            "status": "failed",
+            "error": "goal 不能为空",
+        }
+
+    logger.info("任务 %s 开始执行，目标：%s", state["task_id"], goal)
 
     sub_tasks = decompose_goal(goal)
     if not sub_tasks:
-        return {"status": "failed", "error": f"无法识别目标类型：{goal}"}
+        return {
+            "task_id": state["task_id"],
+            "thread_id": state["thread_id"],
+            "status": "failed",
+            "error": f"无法识别目标类型：{goal}",
+        }
 
-    result = {"sub_tasks": sub_tasks, "status": "running"}
+    result = {
+        "task_id": state["task_id"],
+        "thread_id": state["thread_id"],
+        "sub_tasks": sub_tasks,
+        "status": "running",
+        "results": {},
+    }
     has_error = False
 
     for task in sub_tasks:
@@ -114,12 +142,70 @@ def supervisor_node(state: SupervisorState) -> dict:
 
         result.update(sub)
 
-    result["status"] = "failed" if has_error else "done"
+        if sub.get("copy_result") is not None:
+            result["results"]["copywriter"] = sub["copy_result"]
+        if sub.get("price_result") is not None:
+            result["results"]["pricing"] = sub["price_result"]
+
+    # 审批熔断 + 状态保留
+    if result.get("approval_required") or result.get("forbidden_hit"):
+        result["status"] = "waiting_approval"
+        result["approval_status"] = "pending"
+        result["metadata"] = result.get("metadata", {})
+        result["metadata"]["pending_results"] = {
+            "copy_result": result.get("copy_result"),
+            "price_result": result.get("price_result"),
+        }
+        logger.info("任务 %s 触发审批，等待人工处理", state["task_id"])
+    else:
+        result["status"] = "failed" if has_error else "done"
+        logger.info("任务 %s 执行结束，状态：%s", state["task_id"], result["status"])
+
     return result
 
 
 # ============================================
-# 四、独立运行测试
+# 四、审批恢复函数
+# ============================================
+def approve_task(state: SupervisorState, decision: str, comment: str = "") -> dict:
+    """
+    前端审批后调用，恢复被熔断的任务。
+
+    Args:
+        state: 处于 waiting_approval 状态的 SupervisorState
+        decision: "approved" 或 "rejected"
+        comment: 审批意见
+
+    Returns:
+        更新后的 state，包含最终状态
+    """
+    if state.get("status") != "waiting_approval":
+        return {
+            **state,
+            "error": f"当前状态 {state.get('status')} 不是 waiting_approval，无法审批",
+        }
+
+    state["approval_status"] = decision
+    state["metadata"] = state.get("metadata", {})
+    state["metadata"]["approval_comment"] = comment
+
+    if decision == "approved":
+        state["status"] = "done"
+        state["approval_reason"] = f"人工批准：{comment}" if comment else "人工批准"
+        logger.info("任务 %s 审批通过", state.get("task_id"))
+    elif decision == "rejected":
+        state["status"] = "failed"
+        state["error"] = f"人工拒绝：{comment}" if comment else "人工拒绝"
+        logger.info("任务 %s 审批拒绝", state.get("task_id"))
+    else:
+        state["status"] = "failed"
+        state["error"] = f"无效的审批决定：{decision}"
+
+    return state
+
+
+# ============================================
+# 五、独立运行测试
 # ============================================
 if __name__ == "__main__":
     test_state = {
@@ -133,3 +219,9 @@ if __name__ == "__main__":
     print("调度结果：")
     for k, v in output.items():
         print(f"  {k}: {v}")
+
+    # 模拟审批恢复
+    if output.get("status") == "waiting_approval":
+        print("\n--- 模拟审批通过 ---")
+        approved = approve_task(output, "approved", "同意发布")
+        print(f"最终状态：{approved['status']}")
