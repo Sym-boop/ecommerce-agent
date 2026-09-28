@@ -59,9 +59,12 @@ def test_both():
         "platform": "xiaohongshu",
     }
     result = supervisor_node(state)
-    assert result["status"] in ("done", "failed"), f"意外状态: {result['status']}"
+    # LLM 生成的文案偶发命中违禁词，此时返回 waiting_approval 属正常业务状态
+    assert result["status"] in ("done", "failed", "waiting_approval"), f"意外状态: {result['status']}"
     assert "copy_result" in result, "文案应返回"
-    if "price_result" in result:
+    if result["status"] == "waiting_approval":
+        print("通过：文案已返回，命中违禁词待审批，forbidden_hit =", result.get("forbidden_hit"))
+    elif "price_result" in result:
         print("通过：文案 + 定价都返回")
     else:
         print("通过：文案已返回，定价未就绪：", result.get("error", ""))

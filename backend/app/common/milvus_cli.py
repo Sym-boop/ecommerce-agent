@@ -81,7 +81,12 @@ class MilvusClientWrapper:
         if not _PYMILVUS_AVAILABLE:
             raise RuntimeError("未安装 pymilvus（pip install pymilvus），Milvus 功能不可用，将使用内存模式")
         if self._client is None:
-            kwargs: dict[str, Any] = {"uri": self._uri}
+            kwargs: dict[str, Any] = {
+                "uri": self._uri,
+                # RPC 连接/请求超时（秒）：Milvus 不可达时快速失败，
+                # 让调用方降级到内存模式，避免终端长时间无响应地卡在 gRPC 重试上
+                "timeout": float(os.getenv("MILVUS_TIMEOUT", "5")),
+            }
             if self._token:
                 kwargs["token"] = self._token
             self._client = MilvusClient(**kwargs)
@@ -229,7 +234,7 @@ class MilvusClientWrapper:
                 })
 
             res = self.client.insert(collection_name=name, data=payload)
-            return {"insert_count": len(res.get("insert_count", 0)), "collection": name, "mode": "milvus"}
+            return {"insert_count": res.get("insert_count", 0), "collection": name, "mode": "milvus"}
         except Exception as exc:
             print(f"[milvus_cli] Milvus 连接失败（{exc}），降级到内存模式", file=sys.stderr)
             return self._insert_memory(data)
@@ -367,8 +372,7 @@ class MilvusClientWrapper:
         try:
             res = self.client.delete(collection_name=name, filter=expr)
             self.client.flush(name)
-            self.client.load_collection(name)
-            return {"insert_count": len(res.get("insert_count", 0)), "collection": name, "mode": "milvus"}
+            return {"delete_count": res.get("delete_count", 0)}
         except Exception:
             # 内存模式：按 id 过滤
             before = len(self._memory_docs)
@@ -403,4 +407,50 @@ def insert_data(*args: Any, **kwargs: Any) -> dict[str, Any]:
 
 
 def delete(*args: Any, **kwargs: Any) -> dict[str, Any]:
+
     return _get_instance().delete(*args, **kwargs)
+
+# ============================================================
+# 模块级函数：供 main.py / task_engine.py 使用
+# ============================================================
+
+def get_client() -> MilvusClient:
+    """返回底层 MilvusClient（供 main.py 健康检查用）。"""
+    return _get_instance().client
+
+
+def close_client() -> None:
+    """关闭客户端（供 main.py lifespan 退出时调用）。"""
+    global _instance
+    if _instance is not None and _instance._client is not None:
+        try:
+            _instance._client.close()
+        except Exception:
+            pass
+        _instance._client = None
+        _instance = None
+
+
+def check_banned_words(text: str) -> list[dict]:
+    """违禁词扫描（供 task_engine 的 _safe_check_banned 调用）。
+
+    从本地文件 data/raw/forbidden_words.txt 加载，命中即返回。
+    """
+    fp = _ROOT / "data" / "raw" / "forbidden_words.txt"
+    if not fp.exists():
+        return []
+    hits: list[dict] = []
+    with fp.open("r", encoding="utf-8") as f:
+        for line in f:
+            word = line.strip()
+            if word and word in text:
+                hits.append({
+                    "word": word,
+                    "category": "违禁词",
+                    "replacement": "",
+                })
+    return hits
+
+
+
+
