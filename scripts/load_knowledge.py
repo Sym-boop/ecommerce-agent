@@ -4,7 +4,8 @@
 
 支持的数据文件（位于 data/processed/，JSON / JSONL / CSV 均可）:
     copywriting.*        爆款文案   必填字段: text, platform
-                                    可选字段: category, product, metrics
+                                    可选字段: category, product, metrics, id（业务主键，
+                                    约定 KB-COPY-* 前缀，见 2026-09-23 前端联调会议待办）
     banned_words.*       违禁词表   必填字段: word
                                     可选字段: replacement, category, severity
     competitor_params.*  竞品参数   必填字段: sku, price

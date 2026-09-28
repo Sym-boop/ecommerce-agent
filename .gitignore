@@ -1,6 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 环境变量（绝对不要提交，里面有敏感 Key）
+.env
+.env.local
+
+# Docker 数据卷（体积巨大，必须排除）
+volumes/
+
+# 数据目录
+data/raw/
+data/processed/
+data/samples/
+
+# IDE & 系统文件
+.idea/
+.vscode/
+.DS_Store
+
 __pycache__/
 *.pyc
 *.pyo
 
-# 忽略 Python 虚拟环境目录（注意目录后面的斜杠）
-.venv/
+

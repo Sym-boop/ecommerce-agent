@@ -10,14 +10,38 @@ from typing import TypedDict, Optional
 # ============================================
 # 一、接口定义：SupervisorState
 # ============================================
+from typing import TypedDict, Optional, Any
+
 class SupervisorState(TypedDict, total=False):
-    """Supervisor 全局状态，所有子图共享"""
-    goal: str                    # 运营目标，如"给新品做一波小红书推广"
-    sub_tasks: list              # 拆解后的子任务列表
-    copy_result: str             # 文案生成结果
-    price_result: dict           # 调价建议结果
-    status: str                  # 执行状态：pending / running / done / failed
-    error: Optional[str]         # 错误信息
+    # ---- 任务标识 ----
+    task_id: str                  # 任务唯一 ID
+    thread_id: str                # 会话 ID，用于 Checkpoint 和审批恢复
+    goal: str                     # 运营目标
+
+    # ---- 子任务 ----
+    sub_tasks: list               # [{"type": "copywriter", "payload": {...}}, ...]
+
+    # ---- 子图输入（由 Supervisor 填充） ----
+    product_info: dict            # 商品信息：sku, name, price, description
+    platform: str                 # 目标平台：小红书/TikTok/亚马逊
+    sku: str                      # 商品 SKU
+    our_price: float              # 自身价格
+
+    # ---- 子图输出（统一放 results） ----
+    results: dict                 # {"copywriter": {...}, "pricing": {...}}
+    copy_result: str              # 兼容旧字段，可保留
+    price_result: dict            # 兼容旧字段，可保留
+
+    # ---- 审批与熔断 ----
+    approval_required: bool       # 是否需要人工审批
+    approval_status: str          # pending / approved / rejected
+    approval_reason: str          # 为什么触发审批
+
+    # ---- 执行状态 ----
+    status: str                   # pending / running / done / failed / waiting_approval
+    error: Optional[str]
+    retry_count: int              # 重试次数
+    metadata: dict                # 其他扩展信息
 
 
 # ============================================

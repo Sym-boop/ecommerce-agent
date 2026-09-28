@@ -1,3 +1,4 @@
+
 """Milvus 客户端统一封装（成员B - 通用基础模块）
 
 对 backend/app/agent 下的各 Agent 暴露简洁的向量知识库操作接口，
@@ -51,6 +52,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
 # ---------------------------------------------------------------------------
 # 常量与集合 Schema 定义
 # ---------------------------------------------------------------------------
@@ -61,7 +63,17 @@ COLLECTION_COMPETITOR = "competitor_params"      # 竞品参数快照
 
 ALL_COLLECTIONS = (COLLECTION_COPYWRITING, COLLECTION_BANNED_WORDS, COLLECTION_COMPETITOR)
 
-MILVUS_URI = os.getenv("MILVUS_URI", "http://localhost:19530")
+def _resolve_milvus_uri() -> str:
+    """Milvus 地址解析：优先 MILVUS_URI，其次 .env.example 约定的 MILVUS_HOST/MILVUS_PORT。"""
+    uri = os.getenv("MILVUS_URI", "").strip()
+    if uri:
+        return uri
+    host = os.getenv("MILVUS_HOST", "localhost").strip() or "localhost"
+    port = os.getenv("MILVUS_PORT", "19530").strip() or "19530"
+    return f"http://{host}:{port}"
+
+
+MILVUS_URI = _resolve_milvus_uri()
 MILVUS_TOKEN = os.getenv("MILVUS_TOKEN", "") or None
 MILVUS_INDEX_TYPE = os.getenv("MILVUS_INDEX_TYPE", "HNSW").upper()
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "1024"))
@@ -130,6 +142,7 @@ def _build_schema(collection: str):
     schema.add_field("vector", DataType.FLOAT_VECTOR, dim=EMBEDDING_DIM)
 
     if collection == COLLECTION_COPYWRITING:
+        schema.add_field("doc_id", DataType.VARCHAR, max_length=64)       # 业务主键，约定 KB-COPY-*（前端联调会议 2026-09-23）
         schema.add_field("text", DataType.VARCHAR, max_length=65535)      # 文案正文
         schema.add_field("platform", DataType.VARCHAR, max_length=32)     # xiaohongshu / tiktok / amazon
         schema.add_field("category", DataType.VARCHAR, max_length=64)     # 商品类目
@@ -277,7 +290,6 @@ def _insert(collection: str, records: list[dict], text_of, extra_of) -> int:
     if not records:
         return 0
     client = get_client()
-    now_ms = int(time.time() * 1000)
     total = 0
     for i in range(0, len(records), _INSERT_BATCH):
         batch = records[i:i + _INSERT_BATCH]
@@ -296,12 +308,14 @@ def _insert(collection: str, records: list[dict], text_of, extra_of) -> int:
 def insert_copywriting(records: list[dict]) -> int:
     """批量写入爆款文案。
 
-    records 字段: text(必填)、platform、category、product、metrics(dict)。
+    records 字段: text(必填)、platform、category、product、metrics(dict)、
+                  id/doc_id(可选，业务主键，约定 KB-COPY-*，未传则留空由 Milvus 自增主键标识)。
     """
     return _insert(
         COLLECTION_COPYWRITING, records,
         text_of=lambda r: f"{r.get('product', '')} {r.get('category', '')} {r.get('text', '')}",
         extra_of=lambda r: {
+            "doc_id": str(r.get("doc_id") or r.get("id") or ""),
             "text": r["text"],
             "platform": r.get("platform", ""),
             "category": r.get("category", ""),
@@ -373,7 +387,7 @@ def search_copywriting(query: str, top_k: int = 10, platform: str | None = None,
         platform: 可选，按平台过滤（xiaohongshu/tiktok/amazon）。
         category: 可选，按类目过滤。
     Returns:
-        [{"text", "platform", "category", "product", "metrics", "score"}, ...]
+        [{"doc_id", "text", "platform", "category", "product", "metrics", "score"}, ...]
     """
     expr_parts = []
     if platform:
@@ -382,7 +396,7 @@ def search_copywriting(query: str, top_k: int = 10, platform: str | None = None,
         expr_parts.append(f'category == "{category}"')
     return _search(
         COLLECTION_COPYWRITING, query, top_k, " and ".join(expr_parts),
-        ["text", "platform", "category", "product", "metrics"],
+        ["doc_id", "text", "platform", "category", "product", "metrics"],
     )
 
 
@@ -459,3 +473,5 @@ def check_banned_words(text: str, words: list[dict] | None = None) -> list[dict]
             })
             start = idx + len(word)
     return hits
+
+

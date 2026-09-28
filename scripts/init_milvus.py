@@ -1,3 +1,4 @@
+
 """Milvus Collection 初始化脚本（成员B，需求 SCR-001）
 
 创建三个知识库集合并设置向量索引（维度、索引类型可配）:
@@ -10,8 +11,8 @@
     python scripts/init_milvus.py --drop          # 删除同名集合后重建（清空数据）
     python scripts/init_milvus.py --index-type IVF_FLAT
 
-依赖环境变量:
-    MILVUS_URI         默认 http://localhost:19530（成员A的 docker-compose 启动 Milvus）
+依赖环境变量（项目根目录 .env，与 .env.example 对齐）:
+    MILVUS_HOST/PORT   Milvus 主机与端口（VM 部署时填虚拟机 IP，如 192.168.26.129:19530）
     MILVUS_INDEX_TYPE  默认 HNSW
     EMBEDDING_DIM      默认 1024（建库后不可更改，需与 Embedding 模型输出维度一致）
 """
@@ -52,3 +53,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+
+

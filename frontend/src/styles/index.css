@@ -1,0 +1,199 @@
+/* ===== 全局基础样式 ===== */
+:root {
+  --dashboard-bg: #f0f2f5;
+  --canvas-bg: #f7f9fc;
+  --card-border: #e4e7ed;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', Arial, sans-serif;
+  background: var(--dashboard-bg);
+  color: #303133;
+  font-size: 14px;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #c0c4cc;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ===== 拓扑节点状态色 ===== */
+.node-card {
+  border: 1.5px solid var(--card-border);
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px 12px;
+  min-width: 168px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+  cursor: pointer;
+  transition:
+    box-shadow 0.2s,
+    transform 0.15s,
+    border-color 0.2s;
+  user-select: none;
+}
+.node-card:hover {
+  box-shadow: 0 4px 14px rgba(64, 158, 255, 0.18);
+  transform: translateY(-1px);
+}
+.node-card.is-pending {
+  border-color: #c0c4cc;
+  opacity: 0.75;
+}
+.node-card.is-running {
+  border-color: #409eff;
+  box-shadow: 0 0 0 3px rgba(64, 158, 255, 0.15);
+}
+.node-card.is-success {
+  border-color: #67c23a;
+}
+.node-card.is-failed {
+  border-color: #f56c6c;
+  box-shadow: 0 0 0 3px rgba(245, 108, 108, 0.12);
+}
+.node-card.is-waiting {
+  border-color: #e6a23c;
+  box-shadow: 0 0 0 3px rgba(230, 162, 60, 0.15);
+}
+
+.node-title {
+  font-weight: 600;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  white-space: nowrap;
+}
+.node-sub {
+  font-size: 12px;
+  color: #909399;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.status-dot.is-pending {
+  background: #c0c4cc;
+}
+.status-dot.is-running {
+  background: #409eff;
+  animation: dot-pulse 1.1s ease-in-out infinite;
+}
+.status-dot.is-success {
+  background: #67c23a;
+}
+.status-dot.is-failed {
+  background: #f56c6c;
+}
+.status-dot.is-waiting {
+  background: #e6a23c;
+  animation: dot-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes dot-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(64, 158, 255, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(64, 158, 255, 0);
+  }
+}
+
+/* ===== 连线流动动画 ===== */
+.edge-path {
+  fill: none;
+  stroke: #c0c4cc;
+  stroke-width: 2;
+  transition: stroke 0.25s;
+}
+.edge-path.is-active {
+  stroke: #409eff;
+  stroke-dasharray: 8 6;
+  animation: edge-flow 0.8s linear infinite;
+}
+.edge-path.is-done {
+  stroke: #67c23a;
+}
+.edge-path.is-blocked {
+  stroke: #e6a23c;
+  stroke-dasharray: 6 5;
+}
+@keyframes edge-flow {
+  to {
+    stroke-dashoffset: -14;
+  }
+}
+
+.edge-label {
+  font-size: 11px;
+  fill: #909399;
+}
+.edge-label.is-blocked {
+  fill: #e6a23c;
+  font-weight: 600;
+}
+
+/* ===== 通用工具类 ===== */
+.page-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.page-toolbar .spacer {
+  flex: 1;
+}
+
+.mono {
+  font-family: 'JetBrains Mono', Consolas, Monaco, monospace;
+}
+
+.json-view {
+  background: #1e1e2e;
+  color: #cdd6f4;
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow: auto;
+  max-height: 320px;
+  margin: 0;
+  font-family: 'JetBrains Mono', Consolas, Monaco, monospace;
+}
+
+.hit-word {
+  color: #f56c6c;
+  font-weight: 600;
+  border-bottom: 1px dashed #f56c6c;
+}

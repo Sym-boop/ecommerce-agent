@@ -11,24 +11,38 @@
     celery -A app.common.celery_app beat --loglevel=info
 
 与队友的函数契约（模块未就绪时任务自动跳过并告警，不影响队列运行）:
-    - 成员E pricing.py 需提供: run_pricing_check(skus: list[str] | None) -> dict
+    - 成员E pricing.py 已提供: analyze_sku(sku, goal="") -> dict（调价建议）
     - 成员D copywriter.py 需提供: generate_copy(product: dict, platform: str) -> dict
 
-环境变量:
-    REDIS_URL  默认 redis://localhost:6379/0（成员A的 docker-compose 提供 Redis）
+环境变量（与 .env.example 对齐，成员A维护）:
+    REDIS_HOST / REDIS_PORT  默认 localhost:16379（docker-compose 映射端口）
+    REDIS_URL                可选，完整连接串，优先级最高
 """
 
 from __future__ import annotations
 
+import csv
 import logging
 import os
 from datetime import timedelta
+from pathlib import Path
 
 from celery import Celery
 
 logger = logging.getLogger(__name__)
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+def _redis_url() -> str:
+    """Redis 地址解析：优先 REDIS_URL，其次 .env.example 约定的 REDIS_HOST/REDIS_PORT。"""
+    url = os.getenv("REDIS_URL", "").strip()
+    if url:
+        return url
+    host = os.getenv("REDIS_HOST", "localhost").strip() or "localhost"
+    port = os.getenv("REDIS_PORT", "16379").strip() or "16379"
+    return f"redis://{host}:{port}/0"
+
+
+REDIS_URL = _redis_url()
 
 celery_app = Celery(
     "ecommerce_agent",
@@ -57,27 +71,53 @@ celery_app.conf.update(
     },
 )
 
+# 本品商品清单（成员E维护 data/raw/our_products.csv，列名 sku）
+_OUR_PRODUCTS_CSV = Path(__file__).resolve().parents[3] / "data" / "raw" / "our_products.csv"
+
+
+def _load_skus() -> list[str]:
+    """从 our_products.csv 读取需要监控的 SKU 列表。"""
+    if not _OUR_PRODUCTS_CSV.exists():
+        return []
+    with _OUR_PRODUCTS_CSV.open(encoding="utf-8-sig", newline="") as f:
+        return [row["sku"].strip() for row in csv.DictReader(f) if row.get("sku", "").strip()]
+
 
 @celery_app.task(name="tasks.run_pricing_check", bind=True, max_retries=3, default_retry_delay=60)
 def run_pricing_check(self, skus: list[str] | None = None) -> dict:
-    """CEL-001 定时调价任务：抓取竞品价格 -> 分析波动 -> 生成调价建议。
+    """CEL-001 定时调价任务：遍历本品 SKU -> 调用定价 Agent 生成调价建议。
 
     Args:
-        skus: 可选，指定商品 SKU 列表；为空时由 pricing Agent 自行决定监控范围。
+        skus: 可选，指定商品 SKU 列表；为空时读取 data/raw/our_products.csv。
     Returns:
-        pricing Agent 的返回值（结构化调价建议列表）。
+        {"total", "success", "failed", "skipped", "results": [{"sku", "status", "advice"/"error"}]}
     """
     try:
-        from app.agent.pricing import run_pricing_check as _run
+        from app.agent.pricing import analyze_sku
     except ImportError:
         logger.warning("app.agent.pricing 尚未实现（成员E负责），本次定时调价任务跳过")
         return {"status": "skipped", "reason": "pricing agent not ready"}
 
-    try:
-        return _run(skus=skus)
-    except Exception as exc:  # noqa: BLE001
-        logger.error("定时调价任务执行失败，准备重试: %s", exc)
-        raise self.retry(exc=exc) from exc
+    targets = skus or _load_skus()
+    if not targets:
+        logger.warning("未找到待监控 SKU（data/raw/our_products.csv 缺失或为空），任务跳过")
+        return {"status": "skipped", "reason": "no skus configured"}
+
+    results: list[dict] = []
+    success = failed = 0
+    for sku in targets:
+        entry: dict = {"sku": sku}
+        try:
+            entry["advice"] = analyze_sku(sku, goal=f"定时巡检：监控 {sku} 竞品价格并给出调价建议")
+            entry["status"] = "success"
+            success += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.error("SKU %s 调价分析失败: %s", sku, exc)
+            entry["status"] = "failed"
+            entry["error"] = str(exc)
+            failed += 1
+        results.append(entry)
+    return {"total": len(results), "success": success, "failed": failed, "results": results}
 
 
 @celery_app.task(name="tasks.batch_generate_copy", bind=True, max_retries=3, default_retry_delay=60)
