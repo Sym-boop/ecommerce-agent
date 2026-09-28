@@ -1,4 +1,3 @@
-
 """
 Milvus 客户端封装：连接、插入、检索、删除
 供 copywriter.py / pricing.py 等 Agent 共同调用
@@ -82,23 +81,45 @@ class MilvusClientWrapper:
     # Embedding
     # ------------------------------------------------------------------
     def _load_embedding_fn(self):
-        """懒加载 embedding 函数，优先 OpenAI 兼容接口，fallback 到本地 bge-m3。
+        # 1. 通用 OpenAI 兼容 embedding（优先）
+        emb_base = os.getenv("EMBEDDING_API_BASE", "").rstrip("/")
+        emb_key = os.getenv("EMBEDDING_API_KEY", "").strip()
+        emb_model = os.getenv("EMBEDDING_MODEL", "text-embedding-v4")
+        if emb_base and emb_key and not emb_key.startswith("sk-xxxx"):
+            try:
+                import httpx
 
-        注意: DeepSeek API 不提供 embedding 模型（只有对话/推理模型），
-        如需在线向量化请配置 OPENAI_API_KEY / OPENAI_BASE_URL 指向
-        任何 OpenAI 兼容的 embedding 服务。
-        """
-        # 1. OpenAI 兼容 embedding 接口
+                def _api_embed(texts: list[str]) -> list[list[float]]:
+                    url = f"{emb_base}/embeddings"
+                    headers = {
+                        "Authorization": f"Bearer {emb_key}",
+                        "Content-Type": "application/json",
+                    }
+                    body = {"model": emb_model, "input": texts, "encoding_format": "float"}
+                    with httpx.Client(timeout=30.0) as c:
+                        resp = c.post(url, headers=headers, json=body)
+                        resp.raise_for_status()
+                    data = resp.json()
+                    items = data.get("data", [])
+                    if not items:
+                        raise RuntimeError("embedding API 返回空")
+                    return [item["embedding"] for item in items]
+
+                return _api_embed
+            except Exception:
+                pass
+
+        # 2. OpenAI 官方
         openai_key = os.getenv("OPENAI_API_KEY", "").strip()
         openai_base = os.getenv("OPENAI_BASE_URL", "").rstrip("/")
         if openai_key and not openai_key.startswith("sk-xxxx"):
             try:
-                from openai import OpenAI  # type: ignore
+                from openai import OpenAI
 
                 def _openai_embed(texts: list[str]) -> list[list[float]]:
                     client = OpenAI(api_key=openai_key, base_url=openai_base or None)
                     resp = client.embeddings.create(
-                        model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
+                        model=emb_model,
                         input=texts,
                         encoding_format="float",
                     )
@@ -108,9 +129,9 @@ class MilvusClientWrapper:
             except Exception:
                 pass
 
-        # 2. BGE-M3 (本地 / langchain)
+        # 3. HuggingFace 本地
         try:
-            from langchain_huggingface import HuggingFaceEmbeddings  # type: ignore
+            from langchain_huggingface import HuggingFaceEmbeddings
 
             model_name = os.getenv("BGE_MODEL_NAME", "BAAI/bge-m3")
             hf_embed = HuggingFaceEmbeddings(model_name=model_name)
@@ -127,8 +148,8 @@ class MilvusClientWrapper:
     def embed(self, texts: list[str]) -> list[list[float]]:
         if self._embedding_fn is None:
             raise RuntimeError(
-                "未配置可用 embedding 函数，请在 .env 中设置 OPENAI_API_KEY（OpenAI 兼容接口），"
-                "或安装 langchain-huggingface 使用本地 bge-m3"
+                "未配置可用 embedding 函数，请在 .env 中设置 DEEPSEEK_API_KEY / OPENAI_API_KEY，"
+                "或安装 langchain-huggingface"
             )
         batch_size = 100
         results: list[list[float]] = []
@@ -379,6 +400,3 @@ def insert_data(*args: Any, **kwargs: Any) -> dict[str, Any]:
 
 def delete(*args: Any, **kwargs: Any) -> dict[str, Any]:
     return _get_instance().delete(*args, **kwargs)
-
-
-
