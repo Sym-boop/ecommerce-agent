@@ -43,17 +43,26 @@ class MilvusClientWrapper:
     DEFAULT_DIMENSION = 1024  # 与 B 的 init_milvus.py 保持一致
 
     def __init__(
-        self,
-        uri: Optional[str] = None,
-        token: Optional[str] = None,
-        dimension: int = DEFAULT_DIMENSION,
+            self,
+            uri: Optional[str] = None,
+            token: Optional[str] = None,
+            dimension: int = DEFAULT_DIMENSION,
     ):
-        self._uri = uri or os.getenv("MILVUS_URI", "http://192.168.26.129:19530")
+        # 优先 uri 参数 → 其次 MILVUS_URI → 再次 MILVUS_HOST/PORT → 最后 localhost
+        if uri:
+            resolved_uri = uri
+        elif os.getenv("MILVUS_URI"):
+            resolved_uri = os.getenv("MILVUS_URI")
+        else:
+            host = os.getenv("MILVUS_HOST", "localhost")
+            port = os.getenv("MILVUS_PORT", "19530")
+            resolved_uri = f"http://{host}:{port}"
+
+        self._uri = resolved_uri
         self._token = token or os.getenv("MILVUS_TOKEN", "")
         self._dim = dimension
         self._client: Optional[MilvusClient] = None
         self._embedding_fn = self._load_embedding_fn()
-        # 内存 fallback 存储（无 Milvus 服务时使用）
         self._memory_docs: list[dict[str, Any]] = []
         self._memory_available = False
 
