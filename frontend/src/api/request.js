@@ -4,7 +4,7 @@ import { mockAdapter, USE_MOCK } from './mock'
 
 // 统一响应体约定（与后端对齐）：{ code: 0, msg: 'ok', data: ... }
 const service = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || '/api/v1',
+  baseURL: 'http://localhost:8000/api/v1',
   timeout: 15000,
 })
 

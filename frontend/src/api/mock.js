@@ -9,7 +9,7 @@
 // 3. MockSocket：模拟 WebSocket（任务状态 / 熔断审批事件实时推送）
 // ============================================
 
-export const USE_MOCK = String(import.meta.env.VITE_USE_MOCK || 'true') === 'true'
+export const USE_MOCK = false
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const nowIso = () => new Date().toISOString()
