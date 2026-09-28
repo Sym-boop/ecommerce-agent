@@ -405,5 +405,46 @@ def insert_data(*args: Any, **kwargs: Any) -> dict[str, Any]:
 def delete(*args: Any, **kwargs: Any) -> dict[str, Any]:
     return _get_instance().delete(*args, **kwargs)
 
+# ============================================================
+# 模块级函数：供 main.py / task_engine.py 使用
+# ============================================================
+
+def get_client() -> MilvusClient:
+    """返回底层 MilvusClient（供 main.py 健康检查用）。"""
+    return _get_instance().client
+
+
+def close_client() -> None:
+    """关闭客户端（供 main.py lifespan 退出时调用）。"""
+    global _instance
+    if _instance is not None and _instance._client is not None:
+        try:
+            _instance._client.close()
+        except Exception:
+            pass
+        _instance._client = None
+        _instance = None
+
+
+def check_banned_words(text: str) -> list[dict]:
+    """违禁词扫描（供 task_engine 的 _safe_check_banned 调用）。
+
+    从本地文件 data/raw/forbidden_words.txt 加载，命中即返回。
+    """
+    fp = _ROOT / "data" / "raw" / "forbidden_words.txt"
+    if not fp.exists():
+        return []
+    hits: list[dict] = []
+    with fp.open("r", encoding="utf-8") as f:
+        for line in f:
+            word = line.strip()
+            if word and word in text:
+                hits.append({
+                    "word": word,
+                    "category": "违禁词",
+                    "replacement": "",
+                })
+    return hits
+
 
 

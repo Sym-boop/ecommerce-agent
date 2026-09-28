@@ -246,11 +246,17 @@ def _fallback_copy(goal: str) -> tuple[str, str]:
 
 
 def _try_generate_copy(product: dict, platform: str) -> dict | None:
-    """调用成员D 的 copywriter；未实现或失败返回 None。"""
     try:
-        from app.agent.copywriter import generate_copy
-        return generate_copy(product, platform)
-    except Exception:  # noqa: BLE001
+        from app.agent.copywriter import generate_copy, CopyWriterInput
+        input_data = CopyWriterInput(
+            product_name=product.get("product_name") or product.get("goal", "")[:30],
+            product_sell_points=product.get("product_sell_points") or [],
+            product_category=product.get("product_category") or "通用",
+            platform=platform or "xiaohongshu",
+        )
+        result = generate_copy(input_data)
+        return result.model_dump() if hasattr(result, "model_dump") else result
+    except Exception:
         return None
 
 
@@ -391,25 +397,99 @@ async def _settle_handoff(task: dict, approval_ids: list[str]) -> None:
 
 
 async def run_lifecycle(task_id: str) -> None:
-    """任务主流程：拆解 → 并行子 Agent → Handoff 审批 → 完成。
+    """任务主流程：调 supervisor_node 统一编排，结果映射到前端拓扑。
 
-    成员C 接入 LangGraph 编排后可整体替换本函数。
+    改造点：编排逻辑交给 C 的 supervisor_node，task_engine 只负责：
+    - 存储 task 状态
+    - 把 supervisor 结果映射到 nodes/edges
+    - 从 waiting_approval 生成审批单
+    - WebSocket 广播
     """
+    from app.agent.supervisor import supervisor_node
+
     task = TASKS[task_id]
     sup = _node(task, "n-sup")
-    _patch_node(task, "n-sup", status="running", started_at=_now_iso(), input={"goal": task["goal"]})
-    _log(sup, "info", "接收运营目标，进行意图识别与任务拆解")
+    _patch_node(task, "n-sup", status="running", started_at=_now_iso(),
+                input={"goal": task["goal"]})
+    _log(sup, "info", "接收运营目标，转交 Supervisor 主控编排")
 
-    sub_types = [n["type"] for n in task["nodes"] if n["type"] in ("copywriter", "pricing", "ads")]
+    # 构造 supervisor 的输入 state
+    state = {
+        "task_id": task_id,
+        "thread_id": task_id,
+        "goal": task["goal"],
+        "platform": "xiaohongshu",
+        **task.get("inputs", {}),
+    }
+
+    try:
+        result = await asyncio.to_thread(supervisor_node, state)
+    except Exception as exc:
+        _log(sup, "error", f"Supervisor 执行失败：{exc}")
+        _patch_node(task, "n-sup", status="failed", finished_at=_now_iso(), error=str(exc))
+        task["status"] = "failed"
+        await _emit("task:update", {"task_id": task_id, "status": "failed"})
+        return
+
+    sub_types = [t["type"] for t in result.get("sub_tasks", [])]
     _log(sup, "success", f"拆解完成，分发 {len(sub_types)} 个子任务：{'、'.join(sub_types) or '无'}")
-    _patch_node(task, "n-sup", status="success", finished_at=_now_iso(), output={"sub_tasks": sub_types})
+    _patch_node(task, "n-sup", status="success", finished_at=_now_iso(),
+                output={"sub_tasks": sub_types})
 
-    runners = {"copywriter": _run_copy_node, "pricing": _run_pricing_node, "ads": _run_ads_node}
-    outcomes = await asyncio.gather(*(runners[t](task) for t in sub_types))
-    approval_ids = [aid for ids in outcomes for aid in ids]
+    # 把 supervisor 的 results 映射回 nodes
+    results = result.get("results", {}) or {}
+
+    if "n-copy" in [n["id"] for n in task["nodes"]]:
+        copy_res = results.get("copywriter") or result.get("copy_result")
+        if copy_res:
+            _patch_node(task, "n-copy", status="success", finished_at=_now_iso(),
+                        output={"title": copy_res.get("title"),
+                                "content": copy_res.get("content", "")[:200] + "..."})
+            _log(_node(task, "n-copy"), "success", "Supervisor 已返回文案结果")
+
+    if "n-price" in [n["id"] for n in task["nodes"]]:
+        price_res = results.get("pricing") or result.get("price_result")
+        if price_res:
+            _patch_node(task, "n-price", status="success", finished_at=_now_iso(),
+                        output={"action": price_res.get("action"),
+                                "confidence": price_res.get("confidence")})
+            _log(_node(task, "n-price"), "success", f"调价建议：{price_res.get('action')}")
+
+    # 处理审批（supervisor 返回 waiting_approval）
+    approval_ids: list[str] = []
+    if result.get("status") == "waiting_approval":
+        # 文案审批
+        if results.get("copywriter"):
+            copy_res = results["copywriter"]
+            violations = _safe_check_banned(copy_res.get("content", ""))
+            approval = _make_copy_approval(
+                task,
+                copy_res.get("title", ""),
+                copy_res.get("content", ""),
+                violations,
+            )
+            with _lock:
+                APPROVALS[approval["id"]] = approval
+                register_waiter(approval["id"])
+            await _emit("approval:created", approval)
+            approval_ids.append(approval["id"])
+
+        # 定价审批
+        if results.get("pricing") and results["pricing"].get("need_approval"):
+            approval = _make_pricing_approval(task, results["pricing"])
+            with _lock:
+                APPROVALS[approval["id"]] = approval
+                register_waiter(approval["id"])
+            await _emit("approval:created", approval)
+            approval_ids.append(approval["id"])
 
     if approval_ids:
         await _settle_handoff(task, approval_ids)
+    elif result.get("status") == "failed":
+        task["status"] = "failed"
+        _patch_node(task, "n-end", status="failed", finished_at=_now_iso(),
+                    error=result.get("error", "Supervisor 执行失败"))
+        await _emit("task:update", {"task_id": task_id, "status": "failed"})
     else:
         await _finish_task(task)
 
@@ -419,14 +499,21 @@ async def run_lifecycle(task_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 def create_task(payload: dict) -> dict:
-    """创建任务并启动生命周期，返回任务对象。"""
     goal = str(payload.get("goal") or "").strip()
     if not goal:
         raise EngineError(400, "goal 不能为空")
     task = _build_task({**payload, "goal": goal})
+    # 把 payload 里的业务字段存进 task，供 supervisor 使用
+    task["inputs"] = {
+        k: v for k, v in payload.items()
+        if k in ("sku", "product_name", "product_sell_points",
+                 "product_category", "platform", "our_price", "language")
+    }
     with _lock:
         TASKS[task["id"]] = task
-    asyncio.get_running_loop().create_task(_emit("task:update", {"task_id": task["id"], "status": task["status"]}))
+    asyncio.get_running_loop().create_task(
+        _emit("task:update", {"task_id": task["id"], "status": task["status"]})
+    )
     asyncio.get_running_loop().create_task(run_lifecycle(task["id"]))
     return task
 
