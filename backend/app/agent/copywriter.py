@@ -260,7 +260,7 @@ def _parse_llm_output(raw: str, platform: str) -> dict[str, Any]:
             first_line = raw.split("\n")[0].strip()
             result["title"] = first_line[:80]
 
-        # 正文：标题行之后、标签行之前的内容
+        # 正文：标题行之后、标签行之前的内容（去除"正文："等前缀）
         lines = raw.split("\n")
         content_lines: List[str] = []
         in_content = False
@@ -269,10 +269,12 @@ def _parse_llm_output(raw: str, platform: str) -> dict[str, Any]:
             if re.match(r"^标题[：:]", stripped):
                 in_content = True
                 continue
-            if re.match(r"^标签[：:]", stripped) or re.match(r"^Hashtags[：:]", stripped):
+            if re.match(r"^(标签|标签[：:])", stripped) or re.match(r"Hashtags[：:]", stripped):
                 break
             if in_content:
-                content_lines.append(stripped)
+                # 去除"正文："等引导前缀
+                cleaned = re.sub(r"^(正文|内容|Content)[：:]\s*", "", stripped)
+                content_lines.append(cleaned)
         result["content"] = "\n".join(content_lines).strip() if content_lines else raw
 
         # 标签
