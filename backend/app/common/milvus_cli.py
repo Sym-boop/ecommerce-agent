@@ -258,6 +258,7 @@ class MilvusClientWrapper:
         try:
             if not self.client.has_collection(name):
                 raise RuntimeError("collection 不存在")
+            self.client.load_collection(name)
             query_vec = self.embed([query_text])[0]
             expr = ""
             if filters:
@@ -364,7 +365,9 @@ class MilvusClientWrapper:
         expr = f"{self.PK_FIELD} in {ids}"
         try:
             res = self.client.delete(collection_name=name, filter=expr)
-            return {"delete_count": res.get("delete_count", 0)}
+            self.client.flush(name)
+            self.client.load_collection(name)
+            return {"insert_count": len(res.get("insert_count", 0)), "collection": name, "mode": "milvus"}
         except Exception:
             # 内存模式：按 id 过滤
             before = len(self._memory_docs)
