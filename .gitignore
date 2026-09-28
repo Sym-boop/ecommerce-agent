@@ -11,15 +11,11 @@ venv/
 # Docker 数据卷（体积巨大，必须排除）
 volumes/
 
-
-
 # IDE & 系统文件
 .idea/
 .vscode/
 .DS_Store
 
-__pycache__/
 *.pyc
 *.pyo
-
 
