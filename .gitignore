@@ -11,6 +11,11 @@ venv/
 # Docker 数据卷（体积巨大，必须排除）
 volumes/
 
+# # 数据目录
+# data/raw/
+# data/processed/
+# data/samples/
+
 # IDE & 系统文件
 .idea/
 .vscode/
@@ -22,4 +27,5 @@ __pycache__/
 
 #依赖
 node_modules/
+
 
