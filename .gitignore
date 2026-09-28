@@ -20,4 +20,6 @@ __pycache__/
 *.pyc
 *.pyo
 
+#依赖
+node_modules/
 
