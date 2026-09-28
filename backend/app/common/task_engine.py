@@ -397,14 +397,6 @@ async def _settle_handoff(task: dict, approval_ids: list[str]) -> None:
 
 
 async def run_lifecycle(task_id: str) -> None:
-    """任务主流程：调 supervisor_node 统一编排，结果映射到前端拓扑。
-
-    改造点：编排逻辑交给 C 的 supervisor_node，task_engine 只负责：
-    - 存储 task 状态
-    - 把 supervisor 结果映射到 nodes/edges
-    - 从 waiting_approval 生成审批单
-    - WebSocket 广播
-    """
     from app.agent.supervisor import supervisor_node
 
     task = TASKS[task_id]
@@ -413,7 +405,6 @@ async def run_lifecycle(task_id: str) -> None:
                 input={"goal": task["goal"]})
     _log(sup, "info", "接收运营目标，转交 Supervisor 主控编排")
 
-    # 构造 supervisor 的输入 state
     state = {
         "task_id": task_id,
         "thread_id": task_id,
@@ -436,7 +427,6 @@ async def run_lifecycle(task_id: str) -> None:
     _patch_node(task, "n-sup", status="success", finished_at=_now_iso(),
                 output={"sub_tasks": sub_types})
 
-    # 把 supervisor 的 results 映射回 nodes
     results = result.get("results", {}) or {}
 
     if "n-copy" in [n["id"] for n in task["nodes"]]:
@@ -455,18 +445,14 @@ async def run_lifecycle(task_id: str) -> None:
                                 "confidence": price_res.get("confidence")})
             _log(_node(task, "n-price"), "success", f"调价建议：{price_res.get('action')}")
 
-    # 处理审批（supervisor 返回 waiting_approval）
+    # 处理 supervisor 返回的审批
     approval_ids: list[str] = []
     if result.get("status") == "waiting_approval":
-        # 文案审批
         if results.get("copywriter"):
             copy_res = results["copywriter"]
             violations = _safe_check_banned(copy_res.get("content", ""))
             approval = _make_copy_approval(
-                task,
-                copy_res.get("title", ""),
-                copy_res.get("content", ""),
-                violations,
+                task, copy_res.get("title", ""), copy_res.get("content", ""), violations,
             )
             with _lock:
                 APPROVALS[approval["id"]] = approval
@@ -474,7 +460,6 @@ async def run_lifecycle(task_id: str) -> None:
             await _emit("approval:created", approval)
             approval_ids.append(approval["id"])
 
-        # 定价审批
         if results.get("pricing") and results["pricing"].get("need_approval"):
             approval = _make_pricing_approval(task, results["pricing"])
             with _lock:
@@ -482,6 +467,14 @@ async def run_lifecycle(task_id: str) -> None:
                 register_waiter(approval["id"])
             await _emit("approval:created", approval)
             approval_ids.append(approval["id"])
+
+    # === 单独跑 ads 风控网关 ===
+    ads_approvals: list[str] = []
+    if any(n["id"] == "n-ads" for n in task["nodes"]):
+        ads_approvals = await _run_ads_node(task)
+
+    # 合并
+    approval_ids = list(approval_ids) + ads_approvals
 
     if approval_ids:
         await _settle_handoff(task, approval_ids)

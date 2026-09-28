@@ -79,13 +79,16 @@ def pricing_task(state: SupervisorState) -> dict:
 # ============================================
 # 三、任务拆解 + 主控调度
 # ============================================
+ADS_KEYWORDS = ["广告", "投放", "出价", "千川", "预算", "巨量", "Meta", "加投"]
+
 def decompose_goal(goal: str) -> list:
-    """把运营目标拆解成子任务列表"""
     sub_tasks = []
     if any(kw in goal for kw in ["文案", "推广", "小红书", "TikTok", "亚马逊"]):
         sub_tasks.append({"type": "copywriter", "payload": {"goal": goal}})
     if any(kw in goal for kw in ["调价", "定价", "竞品", "价格"]):
         sub_tasks.append({"type": "pricing", "payload": {"goal": goal}})
+    if any(kw in goal for kw in ADS_KEYWORDS):
+        sub_tasks.append({"type": "ads", "payload": {"goal": goal}})
     return sub_tasks
 
 

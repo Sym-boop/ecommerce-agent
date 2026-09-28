@@ -20,6 +20,11 @@
 """
 
 from __future__ import annotations
+from pathlib import Path
+from dotenv import load_dotenv
+
+_ROOT = Path(__file__).resolve().parents[3]
+load_dotenv(_ROOT / ".env", override=True)
 
 import csv
 import logging
@@ -131,7 +136,7 @@ def batch_generate_copy(self, products: list[dict], platforms: list[str]) -> dic
         {"total", "success", "failed", "results": [{"product", "platform", "status", "copy"}]}
     """
     try:
-        from app.agent.copywriter import generate_copy as _generate
+        from app.agent.copywriter import generate_copy as _generate, CopyWriterInput
     except ImportError:
         logger.warning("app.agent.copywriter 尚未实现（成员D负责），批量文案任务跳过")
         return {"status": "skipped", "reason": "copywriter agent not ready"}
@@ -142,10 +147,17 @@ def batch_generate_copy(self, products: list[dict], platforms: list[str]) -> dic
         for platform in platforms:
             entry = {"product": product.get("sku") or product.get("name", ""), "platform": platform}
             try:
-                entry["copy"] = _generate(product, platform)
+                input_data = CopyWriterInput(
+                    product_name=product.get("product_name") or product.get("name", "")[:30],
+                    product_sell_points=product.get("product_sell_points") or [],
+                    product_category=product.get("product_category") or "通用",
+                    platform=platform,
+                )
+                result = _generate(input_data)
+                entry["copy"] = result.model_dump() if hasattr(result, "model_dump") else result
                 entry["status"] = "success"
                 success += 1
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.error("单条文案生成失败 [%s/%s]: %s", entry["product"], platform, exc)
                 entry["status"] = "failed"
                 entry["error"] = str(exc)
