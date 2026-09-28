@@ -73,38 +73,13 @@ class MilvusClientWrapper:
     # Embedding
     # ------------------------------------------------------------------
     def _load_embedding_fn(self):
-        """懒加载 embedding 函数，优先 DeepSeek，fallback 到 OpenAI，再 fallback 到 bge-m3。"""
-        # 1. DeepSeek embedding
-        ds_api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
-        if ds_api_key and not ds_api_key.startswith("sk-xxxx"):
-            try:
-                import httpx  # noqa: PLC0415
+        """懒加载 embedding 函数，优先 OpenAI 兼容接口，fallback 到本地 bge-m3。
 
-                def _deepseek_embed(texts: list[str]) -> list[list[float]]:
-                    url = "https://api.deepseek.com/v1/embeddings"
-                    headers = {
-                        "Authorization": f"Bearer {ds_api_key}",
-                        "Content-Type": "application/json",
-                    }
-                    body = {
-                        "model": "deepseek-embedding",
-                        "input": texts,
-                        "encoding_format": "float",
-                    }
-                    with httpx.Client(timeout=30.0) as c:
-                        resp = c.post(url, headers=headers, json=body)
-                        resp.raise_for_status()
-                    data = resp.json()
-                    items = data.get("data", [])
-                    if not items:
-                        raise RuntimeError("DeepSeek embedding 返回空")
-                    return [item["embedding"] for item in items]
-
-                return _deepseek_embed
-            except Exception:
-                pass
-
-        # 2. OpenAI embedding
+        注意: DeepSeek API 不提供 embedding 模型（只有对话/推理模型），
+        如需在线向量化请配置 OPENAI_API_KEY / OPENAI_BASE_URL 指向
+        任何 OpenAI 兼容的 embedding 服务。
+        """
+        # 1. OpenAI 兼容 embedding 接口
         openai_key = os.getenv("OPENAI_API_KEY", "").strip()
         openai_base = os.getenv("OPENAI_BASE_URL", "").rstrip("/")
         if openai_key and not openai_key.startswith("sk-xxxx"):
@@ -124,7 +99,7 @@ class MilvusClientWrapper:
             except Exception:
                 pass
 
-        # 3. BGE-M3 (本地 / langchain)
+        # 2. BGE-M3 (本地 / langchain)
         try:
             from langchain_huggingface import HuggingFaceEmbeddings  # type: ignore
 
@@ -143,8 +118,8 @@ class MilvusClientWrapper:
     def embed(self, texts: list[str]) -> list[list[float]]:
         if self._embedding_fn is None:
             raise RuntimeError(
-                "未配置可用 embedding 函数，请在 .env 中设置 DEEPSEEK_API_KEY / OPENAI_API_KEY，"
-                "或安装 langchain-huggingface"
+                "未配置可用 embedding 函数，请在 .env 中设置 OPENAI_API_KEY（OpenAI 兼容接口），"
+                "或安装 langchain-huggingface 使用本地 bge-m3"
             )
         batch_size = 100
         results: list[list[float]] = []
