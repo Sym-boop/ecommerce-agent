@@ -21,8 +21,8 @@ data/samples/
 .vscode/
 .DS_Store
 
-__pycache__/
-*.pyc
-*.pyo
+# __pycache__/
+# *.pyc
+# *.pyo
 
 
