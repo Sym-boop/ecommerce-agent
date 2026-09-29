@@ -28,4 +28,6 @@ __pycache__/
 #依赖
 node_modules/
 
+#个人脚本
+scripts/rebuild_knowledge.py
 

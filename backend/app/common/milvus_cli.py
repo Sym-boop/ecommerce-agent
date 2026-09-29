@@ -264,7 +264,7 @@ class MilvusClientWrapper:
         try:
             if not self.client.has_collection(name):
                 raise RuntimeError("collection 不存在")
-            self.client.load_collection(name)
+            # self.client.load_collection(name)
             query_vec = self.embed([query_text])[0]
             expr = ""
             if filters:
@@ -284,6 +284,7 @@ class MilvusClientWrapper:
                 search_params=search_params,
                 filter=expr,
                 output_fields=[self.TEXT_FIELD, self.META_FIELD],
+                timeout=float(os.getenv("MILVUS_TIMEOUT", "5")),
             )
             docs: list[dict[str, Any]] = []
             for hits in results:
