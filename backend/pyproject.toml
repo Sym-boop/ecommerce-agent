@@ -1,0 +1,30 @@
+[project]
+name = "backend"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "yangliuyu", email = "yang@liuyu.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "celery[redis]>=5.4",
+    "fastapi>=0.115,<1.0",
+    "httpx>=0.27",
+    "langchain-huggingface>=0.1",
+    "pandas>=2.2",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "pymilvus>=2.4,<3.0",
+    "python-dotenv>=1.0",
+    "redis>=5.0",
+    "sentence-transformers>=2.7",
+    "uvicorn[standard]>=0.30",
+]
+
+[project.scripts]
+backend = "backend:main"
+
+[build-system]
+requires = ["uv_build>=0.12.23,<0.13.0"]
+build-backend = "uv_build"
