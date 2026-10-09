@@ -33,12 +33,15 @@ import logging
 import os
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.common import task_engine
+from fastapi.staticfiles import StaticFiles
+
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -79,7 +82,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
+Path("data/media").mkdir(parents=True, exist_ok=True)
+app.mount("/media", StaticFiles(directory="data/media"), name="media")
 # ---------------------------------------------------------------------------
 # 统一响应体
 # ---------------------------------------------------------------------------

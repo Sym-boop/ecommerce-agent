@@ -147,12 +147,22 @@ def _build_task(payload: dict) -> dict:
     if needs["copy"]:
         edges.append({"source": "n-copy", "target": "n-handoff", "label": "重大发布", "kind": "condition"})
         edges.append({"source": "n-copy", "target": "n-end", "label": "常规通过", "kind": "normal"})
+
     if needs["pricing"]:
         edges.append({"source": "n-price", "target": "n-handoff", "label": "超阈值幅度", "kind": "condition"})
         edges.append({"source": "n-price", "target": "n-end", "label": "阈值内", "kind": "normal"})
+
     if needs["ads"]:
         edges.append({"source": "n-ads", "target": "n-handoff", "label": "预算熔断", "kind": "condition"})
-    edges.append({"source": "n-handoff", "target": "n-end", "label": "", "kind": "normal"})
+        edges.append({"source": "n-handoff", "target": "n-end", "label": "", "kind": "normal"})
+
+    if needs["image"]:
+        nodes.append(_make_node("n-image", "image", "图文生成 Agent"))
+        edges.append({"source": "n-copy", "target": "n-image", "label": "生成图文", "kind": "normal"})
+
+    if needs["video"]:
+        nodes.append(_make_node("n-video", "video", "视频生成 Agent"))
+        edges.append({"source": "n-image", "target": "n-video", "label": "生成视频", "kind": "normal"})
 
     return {
         "id": _next_id("TASK"), "goal": goal, "status": "running",
@@ -456,6 +466,18 @@ async def run_lifecycle(task_id: str) -> None:
                         output={"action": price_res.get("action"),
                                 "confidence": price_res.get("confidence")})
             _log(_node(task, "n-price"), "success", f"调价建议：{price_res.get('action')}")
+
+    if "n-image" in [n["id"] for n in task["nodes"]]:
+        img_res = results.get("image")
+        if img_res:
+            _patch_node(task, "n-image", status="success",
+                    		 output={"image_path": img_res.get("image_path")})
+
+    if "n-video" in [n["id"] for n in task["nodes"]]:
+        vid_res = results.get("video")
+        if vid_res:
+            _patch_node(task, "n-video", status="success",
+                    		 output={"video_path": vid_res.get("video_path")})
 
     # 处理 supervisor 返回的审批
     approval_ids: list[str] = []

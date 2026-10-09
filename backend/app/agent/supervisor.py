@@ -7,6 +7,8 @@ import sys
 import uuid
 import logging
 from pathlib import Path
+from backend.app.agent.image_generator import image_generator_node
+from backend.app.agent.video_generator import video_generator_node
 
 _ROOT = Path(__file__).resolve().parents[3]
 if str(_ROOT) not in sys.path:
@@ -62,6 +64,9 @@ class SupervisorState(TypedDict, total=False):
     retry_count: int
     metadata: dict
 
+    image_result: dict
+    video_result: dict
+
 
 # ============================================
 # 二、子 Agent 调用封装
@@ -74,6 +79,7 @@ def copywriter_task(state: SupervisorState) -> dict:
 def pricing_task(state: SupervisorState) -> dict:
     """调用真实 Pricing Agent"""
     return pricing_node(state)
+
 
 
 # ============================================
@@ -89,6 +95,13 @@ def decompose_goal(goal: str) -> list:
         sub_tasks.append({"type": "pricing", "payload": {"goal": goal}})
     if any(kw in goal for kw in ADS_KEYWORDS):
         sub_tasks.append({"type": "ads", "payload": {"goal": goal}})
+
+    # 新增
+    if any(kw in goal for kw in ["图文", "图片", "配图"]):
+        sub_tasks.append({"type": "image"})
+    if any(kw in goal for kw in ["视频", "短视频", "动态"]):
+        sub_tasks.append({"type": "image"})   # 视频依赖图片
+        sub_tasks.append({"type": "video"})
     return sub_tasks
 
 
@@ -136,8 +149,12 @@ def supervisor_node(state: SupervisorState) -> dict:
             sub = copywriter_task(state)
         elif task["type"] == "pricing":
             sub = pricing_task(state)
-        else:
-            continue
+	elif task["type"] == "image":
+            sub = image_generator_node(state)      # ← 新
+    	elif task["type"] == "video":
+            sub = video_generator_node(state)      # ← 新
+    	else:
+        	continue
 
         if sub.get("status") == "failed":
             has_error = True
@@ -149,6 +166,8 @@ def supervisor_node(state: SupervisorState) -> dict:
             result["results"]["copywriter"] = sub["copy_result"]
         if sub.get("price_result") is not None:
             result["results"]["pricing"] = sub["price_result"]
+    	if sub.get("video_result") is not None:
+            result["results"]["video"] = sub["video_result"]
 
     # 审批熔断 + 状态保留
     if result.get("approval_required") or result.get("forbidden_hit"):
@@ -164,7 +183,8 @@ def supervisor_node(state: SupervisorState) -> dict:
         result["status"] = "failed" if has_error else "done"
         logger.info("任务 %s 执行结束，状态：%s", state["task_id"], result["status"])
 
-    return result
+
+    	return result
 
 
 # ============================================
