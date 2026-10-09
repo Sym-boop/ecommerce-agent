@@ -333,13 +333,26 @@ async def _run_pricing_node(task: dict) -> list[str]:
 
 
 async def _run_ads_node(task: dict) -> list[str]:
-    """广告风控网关（SUP-005 预算熔断）：触发即阻断下发并生成审批单。"""
+    """广告风控网关（SUP-005 预算熔断）：超阈值才阻断，否则放行。"""
     node = _node(task, "n-ads")
+    budget = float(task.get("budget") or 0)
+
     _patch_node(task, "n-ads", status="running", started_at=_now_iso(),
-                input={"budget": task.get("budget"), "bid_threshold": BID_THRESHOLD})
+                input={"budget": budget, "bid_threshold": BID_THRESHOLD})
     _log(node, "info", "接收广告计划下发请求，执行风控前置校验")
+
+    # ★ 判断预算是否超阈值
+    if budget < ADS_BUDGET_THRESHOLD:
+        # 未超阈值，直接放行，不生成审批单
+        _log(node, "success",
+             f"总预算 {budget} 元未超过 {ADS_BUDGET_THRESHOLD} 元风控阈值，直接放行")
+        _patch_node(task, "n-ads", status="success", finished_at=_now_iso(),
+                    output={"blocked": False, "reason": "未超阈值", "budget": budget})
+        return []
+
+    # 超阈值，阻断 + 生成审批单
     _log(node, "warn",
-         f"总预算 {task.get('budget') or 80000} 元超过 {ADS_BUDGET_THRESHOLD} 元风控阈值，"
+         f"总预算 {budget} 元超过 {ADS_BUDGET_THRESHOLD} 元风控阈值，"
          "已阻断广告下发 API 调用")
 
     approval = _make_ads_approval(task)
@@ -350,7 +363,6 @@ async def _run_ads_node(task: dict) -> list[str]:
     _patch_node(task, "n-ads", status="success", finished_at=_now_iso(),
                 output={"blocked": True, "reason": "超预算阈值", "approval_id": approval["id"]})
     return [approval["id"]]
-
 
 # ---------------------------------------------------------------------------
 # 生命周期编排

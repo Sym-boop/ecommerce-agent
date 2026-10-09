@@ -394,11 +394,9 @@ def generate_copy(input_data: CopyWriterInput) -> CopyWriterResult:
 # ============================================================
 # 七、Supervisor 调度入口（统一 dict 格式）
 # ============================================================
-def copywriter_node(state: dict[str, Any]) -> dict[str, Any]:
-    """
-    供 Supervisor 调用的节点函数。
-    接收 state dict，返回包含 copy_result / status / forbidden_hit 等的 dict。
-    """
+import re
+
+def copywriter_node(state: dict) -> dict:
     try:
         product_name = state.get("product_name", "")
         sell_points = state.get("product_sell_points", [])
@@ -406,7 +404,24 @@ def copywriter_node(state: dict[str, Any]) -> dict[str, Any]:
         platform = state.get("platform", "xiaohongshu")
         language = state.get("language", "zh-CN")
         ref_count = int(state.get("reference_count", 3))
+        goal = state.get("goal", "")
 
+        # 兜底：从 goal 提取
+        if not product_name:
+            m = re.search(r"新品\s*([^\s，,。的]+)", goal)
+            product_name = m.group(1) if m else (goal[:20] or "新品")
+
+        if not category:
+            if any(k in goal for k in ["连衣裙", "裙子", "女装"]):
+                category = "女装"
+            elif any(k in goal for k in ["保温杯", "水杯", "杯子"]):
+                category = "水杯"
+            elif any(k in goal for k in ["T恤", "衬衫", "衣服"]):
+                category = "服装"
+            else:
+                category = "通用"
+
+        # 保留原校验（现在应该不会触发了）
         if not product_name or not category:
             return {
                 "status": "failed",
