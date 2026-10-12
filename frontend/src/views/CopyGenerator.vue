@@ -43,6 +43,10 @@
                 placeholder="例如：突出场景化种草，语气活泼，带 3 个话题标签"
               />
             </el-form-item>
+            <el-form-item label="投放预算（元，选填）">
+              <el-input-number v-model="form.budget" :min="0" :step="1000" :controls="false" style="width: 200px" />
+              <span class="gen-budget-hint">填写后广告将自动送「预算审查」，异常需在审查中心处置</span>
+            </el-form-item>
             <el-button
               type="primary"
               size="large"
@@ -131,6 +135,7 @@ const form = reactive({
   productName: '',
   sellPoints: '',
   extra: '',
+  budget: null,
 })
 
 const loading = ref(false)
@@ -169,6 +174,7 @@ async function handleGenerate() {
       product_name: form.productName.trim(),
       product_sell_points: form.sellPoints.trim(),
       extra: form.extra.trim(),
+      budget: form.budget == null ? '' : form.budget,
     })
     taskId.value = task_id
     progress.value = 20
@@ -213,5 +219,10 @@ async function copyResult() {
 }
 .gen-submit {
   width: 100%;
+}
+.gen-budget-hint {
+  margin-left: 12px;
+  font-size: 12px;
+  color: #909399;
 }
 </style>

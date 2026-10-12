@@ -21,7 +21,7 @@ from fastapi import APIRouter, BackgroundTasks, File, Form, UploadFile
 from fastapi.responses import JSONResponse
 
 from app.agent.video_generator import generate_short_video
-from app.common import ad_store
+from app.common import pipeline
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -44,7 +44,17 @@ def fail(status: int, msg: str) -> JSONResponse:
     return JSONResponse(status_code=status, content={"code": status, "msg": msg})
 
 
-def _run_generation(task_id: str, prompt: str, image_path: str, duration: int) -> None:
+def _parse_budget(raw) -> float | None:
+    if raw in (None, ""):
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _run_generation(task_id: str, prompt: str, image_path: str, duration: int,
+                    budget: float | None) -> None:
     """后台执行视频生成，并回写任务状态。"""
     task = VIDEO_TASKS.get(task_id)
     if task is None:
@@ -55,12 +65,13 @@ def _run_generation(task_id: str, prompt: str, image_path: str, duration: int) -
         video_url = f"/media/videos/{Path(path).name}"
         task["status"] = "succeeded"
         task["video_url"] = video_url
-        ad_store.add_ad(
+        pipeline.register_ad(
             ad_type="video",
             title=prompt[:40],
             prompt=prompt,
             input_image=task.get("input_image_url"),
             result_url=video_url,
+            budget=budget,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("视频生成失败 task=%s: %s", task_id, exc)
@@ -74,6 +85,7 @@ async def generate_video_api(
     image: UploadFile = File(...),
     prompt: str = Form(""),
     duration: int = Form(10),
+    budget: str = Form(""),
 ):
     """提交视频生成任务：商品图片 + 提示词，返回 task_id 供前端轮询。"""
     suffix = Path(image.filename or "").suffix.lower()
@@ -95,7 +107,9 @@ async def generate_video_api(
         "video_url": None,
         "error": None,
     }
-    background.add_task(_run_generation, task_id, prompt, str(image_path), duration)
+    background.add_task(
+        _run_generation, task_id, prompt, str(image_path), duration, _parse_budget(budget),
+    )
     return ok({"task_id": task_id})
 
 

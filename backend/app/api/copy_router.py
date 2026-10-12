@@ -17,7 +17,7 @@ from fastapi import APIRouter, BackgroundTasks
 from fastapi.responses import JSONResponse
 
 from app.agent.copywriter import CopyWriterInput, generate_copy
-from app.common import ad_store
+from app.common import pipeline
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -43,6 +43,15 @@ def _normalize_sell_points(raw) -> list[str]:
     return []
 
 
+def _parse_budget(raw) -> float | None:
+    if raw in (None, ""):
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def _run_generation(task_id: str, payload: dict) -> None:
     task = COPY_TASKS.get(task_id)
     if task is None:
@@ -63,12 +72,14 @@ def _run_generation(task_id: str, payload: dict) -> None:
             tags=result.tags,
             platform=result.platform,
         )
-        ad_store.add_ad(
+        # 登记到广告流水线：自动完成违禁词 / 预算审查并落定阶段
+        pipeline.register_ad(
             ad_type="copy",
             title=result.title,
             prompt=payload["prompt"],
             platform=result.platform,
             content=result.content,
+            budget=payload.get("budget"),
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("文案生成失败 task=%s: %s", task_id, exc)
@@ -110,6 +121,7 @@ async def generate_copy_api(background: BackgroundTasks, payload: dict | None = 
         "category": str(body.get("product_category") or "通用").strip() or "通用",
         "platform": platform,
         "prompt": prompt,
+        "budget": _parse_budget(body.get("budget")),
     })
     return ok({"task_id": task_id})
 

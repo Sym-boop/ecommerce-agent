@@ -53,7 +53,7 @@
 
           <el-empty
             v-if="availableAds.length === 0"
-            description="暂无待投放的广告物料，请先在文案 / 图文 / 视频生成页创作"
+            description="暂无待投放的广告物料，请先在「审查中心」完成审查与审批"
             :image-size="80"
           />
 
@@ -196,8 +196,8 @@ const submitting = ref(false)
 const latest = ref(null)
 const deliveries = ref([])
 
-// 仅展示「已审批」且尚未投放的广告物料
-const availableAds = computed(() => ads.value.filter((ad) => ad.status === 'published'))
+// 仅展示「已审批通过」且尚未投放的广告物料
+const availableAds = computed(() => ads.value.filter((ad) => ad.stage === 'approved'))
 
 function selectAll() {
   selectedIds.value = availableAds.value.map((ad) => ad.id)

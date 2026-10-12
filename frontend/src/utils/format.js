@@ -36,6 +36,22 @@ export const APPROVAL_STATUS_META = {
   rejected: { label: '已驳回', type: 'danger' },
 }
 
+/** 广告物料类型 */
+export const AD_TYPE_META = {
+  copy: { label: '文案广告', tagType: 'info' },
+  image: { label: '图文广告', tagType: 'success' },
+  video: { label: '视频广告', tagType: 'danger' },
+}
+
+/** 广告流水线阶段 */
+export const STAGE_META = {
+  review: { label: '审查中', type: 'warning' },
+  pending: { label: '待审批', type: 'warning' },
+  approved: { label: '已审批', type: 'success' },
+  delivered: { label: '已投放', type: 'primary' },
+  rejected: { label: '已驳回', type: 'danger' },
+}
+
 export const PLATFORM_META = {
   xiaohongshu: '小红书',
   tiktok: 'TikTok',
@@ -49,8 +65,8 @@ export const PLATFORM_OPTIONS = [
   { value: 'amazon', label: '亚马逊' },
 ]
 
-/** 后端静态资源根地址（与 api/request.js 的 baseURL 同源） */
-export const API_ORIGIN = 'http://localhost:8000'
+/** 后端静态资源根地址；默认留空使用相对路径（走 vite proxy / 同源），可用 VITE_API_ORIGIN 覆盖为绝对地址 */
+export const API_ORIGIN = String(import.meta.env.VITE_API_ORIGIN || '')
 
 /**
  * 把后端返回的媒体路径（如 data/media/images/x.png 或 /media/videos/x.mp4）

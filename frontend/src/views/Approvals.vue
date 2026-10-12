@@ -2,141 +2,139 @@
   <div class="approvals-page">
     <!-- ===== 顶部筛选 ===== -->
     <div class="page-toolbar">
-      <el-radio-group v-model="activeTab" @change="onTabChange">
+      <el-radio-group v-model="activeTab" @change="reload">
         <el-radio-button value="copy-review">
-          文案违禁词审查
-          <el-badge
-            v-if="copyReview.failed_count"
-            :value="copyReview.failed_count"
-            :max="99"
-            type="danger"
-            class="tab-badge"
-          />
+          违禁词审查
+          <el-badge v-if="stats.copy_review" :value="stats.copy_review" :max="99" type="danger" class="tab-badge" />
         </el-radio-button>
         <el-radio-button value="budget-review">
           投放预算审查
-          <el-badge
-            v-if="budgetReview.abnormal_count"
-            :value="budgetReview.abnormal_count"
-            :max="99"
-            type="danger"
-            class="tab-badge"
-          />
+          <el-badge v-if="stats.budget_review" :value="stats.budget_review" :max="99" type="danger" class="tab-badge" />
         </el-radio-button>
         <el-radio-button value="pending">
           待审批
-          <el-badge
-            v-if="approvalStore.pendingList.length"
-            :value="approvalStore.pendingList.length"
-            :max="99"
-            class="tab-badge"
-          />
+          <el-badge v-if="stats.pending" :value="stats.pending" :max="99" type="danger" class="tab-badge" />
         </el-radio-button>
         <el-radio-button value="processed">已处理</el-radio-button>
       </el-radio-group>
 
-      <el-select
-        v-if="isApprovalTab"
-        v-model="approvalStore.filters.type"
-        placeholder="全部类型"
-        clearable
-        style="width: 140px"
-        @change="reload"
-      >
-        <el-option label="文案发布" value="copy" />
-        <el-option label="调价申请" value="pricing" />
-        <el-option label="广告出价" value="ads" />
-      </el-select>
-
-      <el-date-picker
-        v-if="isApprovalTab"
-        v-model="dateRange"
-        type="daterange"
-        value-format="YYYY-MM-DD"
-        range-separator="至"
-        start-placeholder="开始日期"
-        end-placeholder="结束日期"
-        style="width: 260px"
-        @change="onDateChange"
-      />
-
-      <span v-if="!isApprovalTab && reviewConfig" class="review-config-hint">
+      <span v-if="reviewConfig" class="review-config-hint">
         违禁词库 {{ reviewConfig.banned_word_count }} 条 ·
         投放预算区间 ¥{{ reviewConfig.min_budget.toLocaleString() }} ~ ¥{{ reviewConfig.max_budget.toLocaleString() }}
       </span>
 
-      <el-button :icon="Refresh" @click="reload">刷新</el-button>
+      <el-button :icon="Refresh" @click="reloadAll">刷新</el-button>
     </div>
 
-    <!-- ===== 文案违禁词审查 ===== -->
+    <!-- ===== 流水线说明 ===== -->
+    <el-steps :active="stageStep" align-center finish-status="success" class="pipeline-steps">
+      <el-step title="生成广告" />
+      <el-step title="审查处置" :description="`违禁词 ${stats.copy_review} · 预算 ${stats.budget_review}`" />
+      <el-step title="待审批" :description="`${stats.pending} 条`" />
+      <el-step title="广告投放" :description="`已审批 ${stats.approved} 条`" />
+      <el-step title="历史发售" :description="`已投放 ${stats.delivered} 条`" />
+    </el-steps>
+
+    <!-- ===== 违禁词审查 ===== -->
     <div v-if="activeTab === 'copy-review'" v-loading="copyLoading" class="review-block">
       <el-alert
         class="review-summary"
-        :type="copyReview.failed_count ? 'warning' : 'success'"
+        :type="copyReview.total ? 'warning' : 'success'"
         :closable="false"
         show-icon
-        :title="`共审查 ${copyReview.total} 条文案广告，命中违禁词 ${copyReview.failed_count} 条，通过 ${copyReview.passed_count} 条`"
+        :title="`待处置 ${copyReview.total} 条命中违禁词的广告，共命中 ${copyReview.hit_word_total} 处风险表达`"
       >
         <div class="review-summary-desc">
           依据 <span class="mono">{{ reviewConfig?.banned_word_source || 'data/raw/forbidden_words.txt' }}</span>
-          违禁词库（{{ reviewConfig?.banned_word_count ?? 0 }} 条）逐条扫描文案标题与正文。
+          违禁词库逐条扫描广告标题与正文；修正后放行，待预算审查一并通过后自动进入待审批。
         </div>
       </el-alert>
 
-      <el-empty v-if="!copyLoading && copyReview.items.length === 0" description="暂无可审查的文案广告，请先在「文案生成」页创作" />
+      <el-empty v-if="!copyLoading && copyReview.items.length === 0" description="暂无命中违禁词的广告，生成广告后自动送审" />
 
       <el-space v-else direction="vertical" fill :size="14" style="display: flex">
         <el-card
           v-for="row in copyReview.items"
-          :key="row.ad_id"
+          :key="row.id"
           shadow="hover"
-          class="review-card"
-          :class="{ 'is-abnormal': !row.passed }"
+          class="review-card is-abnormal"
         >
           <template #header>
             <div class="card-head">
               <div class="card-head-left">
-                <el-tag :type="row.passed ? 'success' : 'danger'" effect="dark">
-                  {{ row.passed ? '审查通过' : '命中违禁词' }}
+                <el-tag :type="AD_TYPE_META[row.type]?.tagType || 'info'" effect="plain">
+                  {{ AD_TYPE_META[row.type]?.label || row.type }}
                 </el-tag>
+                <el-tag type="danger" effect="dark">命中违禁词</el-tag>
                 <span class="card-title">{{ row.title || '（无标题）' }}</span>
-                <span class="mono card-sku">{{ row.ad_id }}</span>
+                <span class="mono card-sku">{{ row.id }}</span>
               </div>
               <span class="mono card-time">{{ formatTime(row.created_at) }}</span>
             </div>
           </template>
 
-          <div class="review-copy-body">{{ row.content }}</div>
-
-          <el-alert
-            v-if="row.violations.length"
-            type="error"
-            :closable="false"
-            show-icon
-            class="mt12"
-            :title="`命中 ${row.violations.length} 处违禁词 / 风险表达`"
-          >
-            <div class="violation-list">
-              <el-tag
-                v-for="(v, i) in row.violations"
-                :key="i"
-                type="danger"
-                effect="plain"
-                class="violation-chip"
+          <el-row :gutter="18">
+            <el-col :span="15">
+              <div class="field-label">
+                广告标题
+                <el-button link type="primary" size="small" @click="resetDraft(row)">恢复原稿</el-button>
+              </div>
+              <el-input v-model="drafts[row.id].title" placeholder="广告标题" class="edit-title" />
+              <div class="field-label mt12">广告正文</div>
+              <el-input v-model="drafts[row.id].content" type="textarea" :rows="7" resize="vertical" class="copy-textarea" />
+            </el-col>
+            <el-col :span="9">
+              <el-alert
+                :type="resolvedCount(row) === row.violations.length ? 'success' : 'error'"
+                :closable="false"
+                show-icon
+                class="violation-box"
+                :title="`命中 ${row.violations.length} 处，已处理 ${resolvedCount(row)} 处`"
               >
-                {{ v.word }}
-                <span v-if="v.suggestion" class="violation-chip-suggest">→ {{ v.suggestion }}</span>
+                <div
+                  v-for="(v, i) in row.violations"
+                  :key="i"
+                  class="violation-row"
+                  :class="{ 'is-resolved': isResolved(row, v.word) }"
+                >
+                  <div>
+                    <el-tag :type="isResolved(row, v.word) ? 'success' : 'danger'" size="small" effect="plain">
+                      {{ v.word }}
+                    </el-tag>
+                    <span class="violation-type">{{ v.type }}</span>
+                  </div>
+                  <el-button
+                    v-if="v.suggestion"
+                    size="small"
+                    :type="isResolved(row, v.word) ? 'success' : 'default'"
+                    :disabled="isResolved(row, v.word)"
+                    @click="applySuggestion(row, v)"
+                  >
+                    {{ isResolved(row, v.word) ? '已替换' : `替换为「${v.suggestion}」` }}
+                  </el-button>
+                  <span v-else class="violation-type">请在左侧手动修改</span>
+                </div>
+              </el-alert>
+              <div class="field-label mt12">预算状态</div>
+              <el-tag :type="row.budget_ok ? 'success' : 'danger'" effect="plain">
+                {{ row.budget_ok ? '预算正常' : row.budget_msg || '预算异常' }}
               </el-tag>
+            </el-col>
+          </el-row>
+
+          <template #footer>
+            <div class="card-footer">
+              <span class="spacer"></span>
+              <el-button
+                type="success"
+                :loading="actingId === row.id"
+                :disabled="resolvedCount(row) !== row.violations.length"
+                @click="handleClearCopy(row)"
+              >
+                确认修正并放行
+              </el-button>
             </div>
-          </el-alert>
-          <el-alert
-            v-else
-            type="success"
-            :closable="false"
-            show-icon
-            class="mt12"
-            title="未命中违禁词，文案可安全投放"
-          />
+          </template>
         </el-card>
       </el-space>
     </div>
@@ -148,378 +146,157 @@
         :type="budgetReview.abnormal_count ? 'warning' : 'success'"
         :closable="false"
         show-icon
-        :title="`共审查 ${budgetReview.total} 个投放批次，预算异常 ${budgetReview.abnormal_count} 个`"
+        :title="`待处置 ${budgetReview.abnormal_count} 条预算异常的广告`"
       >
         <div class="review-summary-desc">
-          审查区间：¥{{ budgetReview.min_budget?.toLocaleString() }} ~
-          ¥{{ budgetReview.max_budget?.toLocaleString() }}；低于下限视为预算过低，高于上限视为预算超支（超支将在投放时被拦截）。
+          审查区间：¥{{ budgetReview.min_budget?.toLocaleString() }} ~ ¥{{ budgetReview.max_budget?.toLocaleString() }}；
+          低于下限视为预算过低，高于上限视为预算超支。调整预算后放行，与违禁词审查一并通过后进入待审批。
         </div>
       </el-alert>
 
-      <el-empty v-if="!budgetLoading && budgetReview.items.length === 0" description="暂无投放批次，请先在「广告投放」页发起投放（投放需填写预算）" />
+      <el-empty v-if="!budgetLoading && budgetReview.items.length === 0" description="暂无预算异常的广告，生成广告时填写投放预算即可自动送审" />
 
       <el-table v-else :data="budgetReview.items" stripe border class="budget-table">
-        <el-table-column prop="batch_id" label="投放批次" width="200" class-name="mono" />
-        <el-table-column label="目标平台" width="130">
-          <template #default="{ row }">{{ row.platform_label || row.platform }}</template>
-        </el-table-column>
-        <el-table-column label="投放预算" width="140" align="right">
-          <template #default="{ row }">¥{{ Number(row.budget).toLocaleString() }}</template>
-        </el-table-column>
-        <el-table-column label="审查结论" width="120">
+        <el-table-column prop="id" label="广告编号" width="190" class-name="mono" />
+        <el-table-column label="类型" width="100">
           <template #default="{ row }">
-            <el-tag :type="VERDICT_META[row.verdict]?.type" effect="dark" size="small">
-              {{ VERDICT_META[row.verdict]?.label }}
+            <el-tag :type="AD_TYPE_META[row.type]?.tagType || 'info'" size="small" effect="plain">
+              {{ AD_TYPE_META[row.type]?.label || row.type }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="说明" min-width="240">
-          <template #default="{ row }">{{ row.message }}</template>
+        <el-table-column label="标题 / 摘要" min-width="200" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.title || row.prompt || '（无标题）' }}</template>
         </el-table-column>
-        <el-table-column label="投放结果" width="140">
+        <el-table-column label="投放预算" width="140" align="right">
+          <template #default="{ row }">¥{{ Number(row.budget || 0).toLocaleString() }}</template>
+        </el-table-column>
+        <el-table-column label="审查结论" width="120">
           <template #default="{ row }">
-            成功 {{ row.success_count }} / 失败 {{ row.failed_count }}
+            <el-tag :type="VERDICT_META[row.budget_verdict]?.type" effect="dark" size="small">
+              {{ VERDICT_META[row.budget_verdict]?.label }}
+            </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="投放时间" width="170">
-          <template #default="{ row }">{{ formatTime(row.submitted_at) }}</template>
+        <el-table-column label="说明" min-width="220">
+          <template #default="{ row }">{{ row.budget_msg }}</template>
+        </el-table-column>
+        <el-table-column label="违禁词" width="100">
+          <template #default="{ row }">
+            <el-tag :type="row.copy_ok ? 'success' : 'danger'" size="small" effect="plain">
+              {{ row.copy_ok ? '通过' : '待处置' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="150" fixed="right">
+          <template #default="{ row }">
+            <el-button size="small" type="primary" plain @click="openBudgetDialog(row)">调整预算并放行</el-button>
+          </template>
         </el-table-column>
       </el-table>
     </div>
 
-    <!-- ===== 待审批列表 ===== -->
-    <div v-else v-loading="approvalStore.loading">
-      <template v-if="activeTab === 'pending'">
-        <el-empty
-          v-if="approvalStore.pendingList.length === 0"
-          description="暂无待审批事项，风控熔断触发的文案/调价/广告审批将实时推送到这里"
-        />
-        <el-space v-else direction="vertical" fill :size="14" style="display: flex">
-          <!-- 文案审批卡 -->
-          <el-card
-            v-for="item in pendingCopies"
-            :key="item.id"
-            shadow="hover"
-            class="approval-card"
-            :class="{ 'is-critical': item.priority === 'critical' }"
-          >
-            <template #header>
-              <div class="card-head">
-                <div class="card-head-left">
-                  <el-tag type="primary">文案发布</el-tag>
-                  <el-tag effect="plain">{{ PLATFORM_META[item.platform] || item.platform }}</el-tag>
-                  <el-tag effect="plain" size="small">{{ item.language }}</el-tag>
-                  <span class="card-title">{{ item.product_name }}</span>
-                  <span class="mono card-sku">{{ item.sku }}</span>
-                </div>
-                <div class="card-head-right">
-                  <span class="mono card-time">{{ formatTime(item.created_at) }}</span>
-                  <el-tag type="warning" effect="dark">待审批</el-tag>
-                </div>
+    <!-- ===== 待审批 ===== -->
+    <div v-else-if="activeTab === 'pending'" v-loading="pendingLoading" class="review-block">
+      <el-alert
+        class="review-summary"
+        type="info"
+        :closable="false"
+        show-icon
+        :title="`${pendingList.length} 条广告已通过违禁词与预算审查，等待人工审批`"
+      >
+        <div class="review-summary-desc">审批通过后广告进入「广告投放」；驳回则进入已处理并退出流水线。</div>
+      </el-alert>
+
+      <el-empty v-if="!pendingLoading && pendingList.length === 0" description="暂无待审批广告，完成审查处置后会自动汇聚到这里" />
+
+      <el-space v-else direction="vertical" fill :size="14" style="display: flex">
+        <el-card v-for="item in pendingList" :key="item.id" shadow="hover" class="approval-card">
+          <template #header>
+            <div class="card-head">
+              <div class="card-head-left">
+                <el-tag :type="AD_TYPE_META[item.type]?.tagType || 'info'" effect="plain">
+                  {{ AD_TYPE_META[item.type]?.label || item.type }}
+                </el-tag>
+                <el-tag effect="plain">{{ PLATFORM_META[item.platform] || item.platform || '未指定平台' }}</el-tag>
+                <span class="card-title">{{ item.title || '（无标题）' }}</span>
+                <span class="mono card-sku">{{ item.id }}</span>
               </div>
-            </template>
+              <div class="card-head-right">
+                <span class="mono card-time">{{ formatTime(item.created_at) }}</span>
+                <el-tag type="warning" effect="dark">待审批</el-tag>
+              </div>
+            </div>
+          </template>
 
-            <el-row :gutter="18">
-              <el-col :span="15">
-                <div class="field-label">
-                  文案标题
-                  <span class="field-hint">可在线微调，保存后生成新版本</span>
-                </div>
-                <el-input v-model="drafts[item.id].title" placeholder="文案标题" class="edit-title" />
-
-                <div class="field-label mt12">
-                  文案正文
-                  <el-button link type="primary" size="small" @click="resetDraft(item)">
-                    恢复 Agent 原稿
-                  </el-button>
-                </div>
-                <el-input
-                  v-model="drafts[item.id].content"
-                  type="textarea"
-                  :rows="9"
-                  resize="vertical"
-                  class="copy-textarea"
+          <el-row :gutter="18">
+            <el-col :span="15">
+              <div v-if="item.type === 'copy'" class="review-copy-body">{{ item.content || '—' }}</div>
+              <template v-else>
+                <el-image
+                  v-if="item.type === 'image' && item.result_url"
+                  class="approval-media"
+                  :src="mediaUrl(item.result_url)"
+                  :preview-src-list="[mediaUrl(item.result_url)]"
+                  fit="cover"
+                  hide-on-click-modal
                 />
-              </el-col>
+                <video v-else-if="item.type === 'video' && item.result_url" class="approval-media" :src="mediaUrl(item.result_url)" controls preload="metadata"></video>
+                <div v-if="item.content" class="review-copy-body mt12">{{ item.content }}</div>
+              </template>
+            </el-col>
+            <el-col :span="9">
+              <el-descriptions :column="1" border size="small">
+                <el-descriptions-item label="生成提示词">{{ item.prompt || '—' }}</el-descriptions-item>
+                <el-descriptions-item label="投放预算">
+                  ¥{{ Number(item.budget || 0).toLocaleString() }}
+                  <span class="threshold-hint">{{ item.budget_msg }}</span>
+                </el-descriptions-item>
+                <el-descriptions-item label="审查结论">
+                  <el-tag type="success" size="small" effect="plain">违禁词通过</el-tag>
+                  <el-tag type="success" size="small" effect="plain" style="margin-left: 6px">预算通过</el-tag>
+                </el-descriptions-item>
+              </el-descriptions>
+            </el-col>
+          </el-row>
 
-              <el-col :span="9">
-                <el-alert
-                  v-if="item.violations.length"
-                  :type="resolvedCount(item) === item.violations.length ? 'success' : 'error'"
-                  :closable="false"
-                  show-icon
-                  class="violation-box"
-                  :title="resolvedCount(item) === 0
-                    ? `违禁词 / 风险表达扫描：命中 ${item.violations.length} 处`
-                    : `违禁词 / 风险表达扫描：命中 ${item.violations.length} 处，已处理 ${resolvedCount(item)} 处`"
-                >
-                  <div
-                    v-for="(v, i) in item.violations"
-                    :key="i"
-                    class="violation-row"
-                    :class="{ 'is-resolved': isResolved(item, v.word) }"
-                  >
-                    <div>
-                      <el-tag
-                        :type="isResolved(item, v.word) ? 'success' : 'danger'"
-                        size="small"
-                        :effect="isResolved(item, v.word) ? 'light' : 'plain'"
-                      >{{ v.word }}</el-tag>
-                      <span class="violation-type">{{ v.type }}</span>
-                      <span v-if="isResolved(item, v.word)" class="resolved-text">已替换</span>
-                    </div>
-                    <el-button
-                      size="small"
-                      :type="isResolved(item, v.word) ? 'success' : 'default'"
-                      :disabled="isResolved(item, v.word)"
-                      @click="applySuggestion(item, v)"
-                    >
-                      {{ isResolved(item, v.word) ? '已替换' : `替换为「${v.suggestion}」` }}
-                    </el-button>
-                  </div>
-                </el-alert>
-                <el-alert
-                  v-else
-                  type="success"
-                  :closable="false"
-                  show-icon
-                  title="违禁词扫描通过，未命中风险词"
-                  class="violation-box"
-                />
+          <template #footer>
+            <div class="card-footer">
+              <span class="spacer"></span>
+              <el-button type="danger" plain @click="openReject(item)">驳回</el-button>
+              <el-button type="success" :loading="actingId === item.id" @click="handleApprove(item)">通过并进入投放</el-button>
+            </div>
+          </template>
+        </el-card>
+      </el-space>
+    </div>
 
-                <div class="field-label mt12">版本记录（{{ item.versions.length }}）</div>
-                <el-timeline class="version-timeline">
-                  <el-timeline-item
-                    v-for="ver in [...item.versions].reverse()"
-                    :key="ver.version"
-                    :timestamp="`v${ver.version} · ${ver.editor} · ${formatTime(ver.created_at)}`"
-                    placement="top"
-                  />
-                </el-timeline>
-              </el-col>
-            </el-row>
-
-            <template #footer>
-              <div class="card-footer">
-                <el-button
-                  :loading="savingId === item.id"
-                  @click="handleSaveDraft(item)"
-                >
-                  保存微调版本
-                </el-button>
-                <span class="spacer"></span>
-                <el-button type="danger" plain @click="openReject(item)">驳回</el-button>
-                <el-button type="success" @click="handleApproveCopy(item)">
-                  微调后通过并发布
-                </el-button>
-              </div>
-            </template>
-          </el-card>
-
-          <!-- 调价审批卡 -->
-          <el-card
-            v-for="item in pendingPricings"
-            :key="item.id"
-            shadow="hover"
-            class="approval-card"
-          >
-            <template #header>
-              <div class="card-head">
-                <div class="card-head-left">
-                  <el-tag type="warning">调价申请</el-tag>
-                  <el-tag type="danger" effect="dark" v-if="item.threshold_exceeded">
-                    超过 ±{{ item.threshold_percent }}% 阈值
-                  </el-tag>
-                  <span class="card-title">{{ item.product_name }}</span>
-                  <span class="mono card-sku">{{ item.sku }}</span>
-                </div>
-                <div class="card-head-right">
-                  <span class="mono card-time">{{ formatTime(item.created_at) }}</span>
-                  <el-tag type="warning" effect="dark">待审批</el-tag>
-                </div>
-              </div>
-            </template>
-
-            <el-row :gutter="18">
-              <el-col :span="14">
-                <div class="price-compare">
-                  <div class="price-box">
-                    <div class="price-label">当前售价</div>
-                    <div class="price-old">¥{{ item.current_price.toFixed(2) }}</div>
-                  </div>
-                  <el-icon :size="22" color="#909399"><Right /></el-icon>
-                  <div class="price-box">
-                    <div class="price-label">建议售价</div>
-                    <div class="price-new">¥{{ item.suggested_price.toFixed(2) }}</div>
-                  </div>
-                  <el-tag
-                    :type="item.change_percent < 0 ? 'danger' : 'success'"
-                    size="large"
-                    effect="dark"
-                    class="price-change"
-                  >
-                    {{ item.change_percent > 0 ? '+' : '' }}{{ item.change_percent.toFixed(2) }}%
-                  </el-tag>
-                </div>
-
-                <el-descriptions :column="2" border size="small" class="mt12">
-                  <el-descriptions-item label="建议动作">{{ item.action }}</el-descriptions-item>
-                  <el-descriptions-item label="置信度">
-                    <el-progress
-                      :percentage="Math.round(item.confidence * 100)"
-                      :status="item.confidence >= 0.8 ? 'success' : ''"
-                      :stroke-width="14"
-                    />
-                  </el-descriptions-item>
-                  <el-descriptions-item label="预期收益" :span="2">
-                    {{ item.expected_revenue }}
-                  </el-descriptions-item>
-                  <el-descriptions-item label="风险评估" :span="2">
-                    <el-tag :type="RISK_META[item.risk_level]?.type" size="small">
-                      {{ RISK_META[item.risk_level]?.label }}
-                    </el-tag>
-                    <span class="risk-note">{{ item.risk_note }}</span>
-                  </el-descriptions-item>
-                  <el-descriptions-item label="调价依据" :span="2">
-                    {{ item.reason }}
-                  </el-descriptions-item>
-                </el-descriptions>
-              </el-col>
-
-              <el-col :span="10">
-                <div class="field-label">竞品实时比价（ERP MCP）</div>
-                <el-table :data="item.competitors" size="small" border>
-                  <el-table-column prop="name" label="竞品" min-width="130" />
-                  <el-table-column label="到手价" width="110" align="right">
-                    <template #default="{ row }">
-                      <span :class="{ 'cheaper': row.price + (row.shipping || 0) <= item.suggested_price }">
-                        ¥{{ (row.price + (row.shipping || 0)).toFixed(2) }}
-                      </span>
-                    </template>
-                  </el-table-column>
-                </el-table>
-                <el-alert
-                  class="mt12"
-                  :type="item.threshold_exceeded ? 'error' : 'info'"
-                  :closable="false"
-                  show-icon
-                  :title="
-                    item.threshold_exceeded
-                      ? `降幅超过风控阈值 ±${item.threshold_percent}%，Agent 已暂停调价执行`
-                      : '波动在风控阈值内，可快速审批'
-                  "
-                />
-              </el-col>
-            </el-row>
-
-            <template #footer>
-              <div class="card-footer">
-                <span class="spacer"></span>
-                <el-button type="danger" plain @click="openReject(item)">驳回</el-button>
-                <el-button type="success" @click="handleApprove(item)">一键通过并调价</el-button>
-              </div>
-            </template>
-          </el-card>
-
-          <!-- 广告出价审批卡 -->
-          <el-card
-            v-for="item in pendingAds"
-            :key="item.id"
-            shadow="hover"
-            class="approval-card is-critical"
-          >
-            <template #header>
-              <div class="card-head">
-                <div class="card-head-left">
-                  <el-tag type="danger">广告出价</el-tag>
-                  <el-tag effect="plain">{{ item.platform }}</el-tag>
-                  <span class="card-title">{{ item.campaign_name }}</span>
-                </div>
-                <div class="card-head-right">
-                  <el-tag type="danger" effect="dark">预算熔断阻断中</el-tag>
-                  <span class="mono card-time">{{ formatTime(item.created_at) }}</span>
-                </div>
-              </div>
-            </template>
-
-            <el-row :gutter="18">
-              <el-col :span="12">
-                <el-descriptions :column="2" border size="small">
-                  <el-descriptions-item label="计划出价">
-                    <b class="danger-text">¥{{ item.bid.toFixed(2) }}</b>
-                  </el-descriptions-item>
-                  <el-descriptions-item label="出价阈值">
-                    ¥{{ item.bid_threshold.toFixed(2) }}
-                  </el-descriptions-item>
-                  <el-descriptions-item label="日预算">
-                    ¥{{ item.daily_budget.toLocaleString() }}
-                  </el-descriptions-item>
-                  <el-descriptions-item label="总预算">
-                    <b class="danger-text">¥{{ item.total_budget.toLocaleString() }}</b>
-                    <span class="threshold-hint">（阈值 ¥{{ item.budget_threshold.toLocaleString() }}）</span>
-                  </el-descriptions-item>
-                  <el-descriptions-item label="ROI 预测">
-                    <b>{{ item.roi_forecast }}</b>
-                  </el-descriptions-item>
-                  <el-descriptions-item label="预计点击">{{ item.expected_clicks }}</el-descriptions-item>
-                  <el-descriptions-item label="申请原因" :span="2">{{ item.reason }}</el-descriptions-item>
-                </el-descriptions>
-              </el-col>
-              <el-col :span="12">
-                <div class="field-label">预算渠道分配</div>
-                <div v-for="row in item.allocation" :key="row.channel" class="alloc-row">
-                  <div class="alloc-head">
-                    <span>{{ row.channel }}</span>
-                    <span class="mono">
-                      {{ row.percent }}% · ¥{{ row.amount.toLocaleString() }}
-                    </span>
-                  </div>
-                  <el-progress :percentage="row.percent" :show-text="false" :stroke-width="12" />
-                </div>
-                <el-alert
-                  type="error"
-                  :closable="false"
-                  show-icon
-                  class="mt12"
-                  title="出价与总预算超过风控阈值，广告下发 API 已被熔断阻断；审批通过后方可执行投放"
-                />
-              </el-col>
-            </el-row>
-
-            <template #footer>
-              <div class="card-footer">
-                <span class="spacer"></span>
-                <el-button type="danger" plain @click="openReject(item)">驳回</el-button>
-                <el-button type="success" @click="handleApprove(item)">确认通过并下发投放</el-button>
-              </div>
-            </template>
-          </el-card>
-        </el-space>
-      </template>
-
-      <!-- ===== 已处理记录 ===== -->
-      <el-card v-else shadow="never">
-        <el-table :data="approvalStore.processedList" v-loading="approvalStore.loading" stripe>
-          <el-table-column prop="id" label="审批单号" width="170" class-name="mono" />
+    <!-- ===== 已处理 ===== -->
+    <div v-else v-loading="processedLoading" class="review-block">
+      <el-card shadow="never">
+        <el-table :data="processedList" stripe>
+          <el-table-column prop="id" label="广告编号" width="190" class-name="mono" />
           <el-table-column label="类型" width="100">
             <template #default="{ row }">
-              <el-tag :type="APPROVAL_TYPE_META[row.type]?.type" size="small">
-                {{ APPROVAL_TYPE_META[row.type]?.label }}
+              <el-tag :type="AD_TYPE_META[row.type]?.tagType || 'info'" size="small" effect="plain">
+                {{ AD_TYPE_META[row.type]?.label || row.type }}
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="摘要" min-width="220">
-            <template #default="{ row }">{{ summaryOf(row) }}</template>
+          <el-table-column label="标题 / 摘要" min-width="200" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.title || row.prompt || '（无标题）' }}</template>
           </el-table-column>
-          <el-table-column prop="task_id" label="关联任务" width="180" class-name="mono" />
-          <el-table-column label="结果" width="90">
+          <el-table-column label="阶段" width="110">
             <template #default="{ row }">
-              <el-tag :type="APPROVAL_STATUS_META[row.status]?.type" size="small">
-                {{ APPROVAL_STATUS_META[row.status]?.label }}
+              <el-tag :type="STAGE_META[row.stage]?.type" size="small" effect="dark">
+                {{ STAGE_META[row.stage]?.label }}
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="handler" label="处理人" width="110" />
+          <el-table-column label="投放预算" width="130" align="right">
+            <template #default="{ row }">¥{{ Number(row.budget || 0).toLocaleString() }}</template>
+          </el-table-column>
+          <el-table-column prop="handler" label="处理人" width="120" />
           <el-table-column label="处理时间" width="170">
             <template #default="{ row }">{{ formatTime(row.handled_at) }}</template>
           </el-table-column>
@@ -528,13 +305,27 @@
       </el-card>
     </div>
 
+    <!-- ===== 调整预算对话框 ===== -->
+    <el-dialog v-model="budgetDialogVisible" title="调整投放预算并放行" width="440px">
+      <div class="reject-target">
+        <el-tag size="small" effect="plain">{{ budgetTarget?.id }}</el-tag>
+        <span>{{ budgetTarget?.title || budgetTarget?.prompt }}</span>
+      </div>
+      <el-input-number v-model="budgetInput" :min="0" :step="1000" :controls="false" style="width: 200px" />
+      <span class="budget-hint">
+        合理区间 ¥{{ budgetReview.min_budget?.toLocaleString() }} ~ ¥{{ budgetReview.max_budget?.toLocaleString() }}
+      </span>
+      <template #footer>
+        <el-button @click="budgetDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="acting" @click="confirmClearBudget">确认放行</el-button>
+      </template>
+    </el-dialog>
+
     <!-- ===== 驳回原因对话框 ===== -->
     <el-dialog v-model="rejectDialogVisible" title="驳回审批" width="460px">
       <div class="reject-target">
-        <el-tag :type="APPROVAL_TYPE_META[rejectTarget?.type]?.type" size="small">
-          {{ APPROVAL_TYPE_META[rejectTarget?.type]?.label }}
-        </el-tag>
-        <span>{{ summaryOf(rejectTarget) }}</span>
+        <el-tag size="small" effect="plain">{{ rejectTarget?.id }}</el-tag>
+        <span>{{ rejectTarget?.title || rejectTarget?.prompt }}</span>
       </div>
       <el-input
         v-model="rejectComment"
@@ -542,7 +333,7 @@
         :rows="4"
         maxlength="200"
         show-word-limit
-        placeholder="请填写驳回原因（必填），将随熔断环路回传给 Agent 与提交人"
+        placeholder="请填写驳回原因（必填）"
       />
       <template #footer>
         <el-button @click="rejectDialogVisible = false">取消</el-button>
@@ -553,27 +344,26 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh, Right } from '@element-plus/icons-vue'
-import { useApprovalStore } from '@/stores/approval'
-import { getCopyReview, getBudgetReview, getReviewConfig } from '@/api'
+import { Refresh } from '@element-plus/icons-vue'
 import {
-  formatTime,
-  PLATFORM_META,
-  APPROVAL_TYPE_META,
-  APPROVAL_STATUS_META,
-} from '@/utils/format'
+  getCopyReview,
+  getBudgetReview,
+  getReviewConfig,
+  getReviewStats,
+  getReviewPending,
+  getReviewProcessed,
+  clearCopyReview,
+  clearBudgetReview,
+  approveAd,
+  rejectAd,
+} from '@/api'
+import { useAppStore } from '@/stores/app'
+import { formatTime, mediaUrl, PLATFORM_META, AD_TYPE_META, STAGE_META } from '@/utils/format'
 
-const approvalStore = useApprovalStore()
+const appStore = useAppStore()
 const activeTab = ref('copy-review')
-const dateRange = ref(null)
-
-const RISK_META = {
-  low: { label: '低风险', type: 'success' },
-  medium: { label: '中风险', type: 'warning' },
-  high: { label: '高风险', type: 'danger' },
-}
 
 // 预算审查结论
 const VERDICT_META = {
@@ -582,14 +372,25 @@ const VERDICT_META = {
   low: { label: '预算过低', type: 'warning' },
 }
 
-const isApprovalTab = computed(() => activeTab.value === 'pending' || activeTab.value === 'processed')
-
-// ---------- 审查中心数据 ----------
+// ---------- 各阶段数据 ----------
 const reviewConfig = ref(null)
+const stats = reactive({ copy_review: 0, budget_review: 0, pending: 0, approved: 0, delivered: 0, rejected: 0 })
 const copyLoading = ref(false)
 const budgetLoading = ref(false)
-const copyReview = reactive({ items: [], total: 0, failed_count: 0, passed_count: 0 })
+const pendingLoading = ref(false)
+const processedLoading = ref(false)
+const copyReview = reactive({ items: [], total: 0, hit_word_total: 0 })
 const budgetReview = reactive({ items: [], total: 0, abnormal_count: 0, min_budget: 0, max_budget: 0 })
+const pendingList = ref([])
+const processedList = ref([])
+
+const stageStep = computed(() => {
+  if (stats.delivered) return 5
+  if (stats.approved) return 4
+  if (stats.pending) return 3
+  if (stats.copy_review || stats.budget_review) return 2
+  return 1
+})
 
 async function fetchReviewConfig() {
   try {
@@ -599,13 +400,25 @@ async function fetchReviewConfig() {
   }
 }
 
+async function fetchStats() {
+  try {
+    Object.assign(stats, await getReviewStats())
+  } catch {
+    /* 忽略 */
+  }
+}
+
 async function fetchCopyReview() {
   copyLoading.value = true
   try {
     const res = await getCopyReview()
     Object.assign(copyReview, res)
+    // 为每条待处置广告初始化可编辑草稿
+    ;(res.items || []).forEach((row) => {
+      if (!drafts[row.id]) drafts[row.id] = { title: row.title, content: row.content }
+    })
   } catch {
-    Object.assign(copyReview, { items: [], total: 0, failed_count: 0, passed_count: 0 })
+    Object.assign(copyReview, { items: [], total: 0, hit_word_total: 0 })
   } finally {
     copyLoading.value = false
   }
@@ -614,8 +427,7 @@ async function fetchCopyReview() {
 async function fetchBudgetReview() {
   budgetLoading.value = true
   try {
-    const res = await getBudgetReview()
-    Object.assign(budgetReview, res)
+    Object.assign(budgetReview, await getBudgetReview())
   } catch {
     Object.assign(budgetReview, { items: [], total: 0, abnormal_count: 0, min_budget: 0, max_budget: 0 })
   } finally {
@@ -623,88 +435,158 @@ async function fetchBudgetReview() {
   }
 }
 
-const pendingCopies = computed(() => approvalStore.pendingList.filter((a) => a.type === 'copy'))
-const pendingPricings = computed(() => approvalStore.pendingList.filter((a) => a.type === 'pricing'))
-const pendingAds = computed(() => approvalStore.pendingList.filter((a) => a.type === 'ads'))
-
-// ---------- 筛选 ----------
-function onDateChange(val) {
-  if (val && val.length === 2) {
-    approvalStore.filters.start_time = `${val[0]}T00:00:00`
-    approvalStore.filters.end_time = `${val[1]}T23:59:59`
-  } else {
-    approvalStore.filters.start_time = ''
-    approvalStore.filters.end_time = ''
+async function fetchPending() {
+  pendingLoading.value = true
+  try {
+    pendingList.value = (await getReviewPending()).items || []
+  } catch {
+    pendingList.value = []
+  } finally {
+    pendingLoading.value = false
   }
-  reload()
 }
 
-function onTabChange() {
-  reload()
+async function fetchProcessed() {
+  processedLoading.value = true
+  try {
+    processedList.value = (await getReviewProcessed()).items || []
+  } catch {
+    processedList.value = []
+  } finally {
+    processedLoading.value = false
+  }
+}
+
+async function reloadAll() {
+  await Promise.all([
+    fetchStats(),
+    fetchCopyReview(),
+    fetchBudgetReview(),
+    fetchPending(),
+    fetchProcessed(),
+    appStore.refreshPendingCount(),
+  ])
 }
 
 function reload() {
   if (activeTab.value === 'copy-review') fetchCopyReview()
   else if (activeTab.value === 'budget-review') fetchBudgetReview()
-  else if (activeTab.value === 'pending') approvalStore.fetchPending()
-  else if (activeTab.value === 'processed') approvalStore.fetchProcessed()
+  else if (activeTab.value === 'pending') fetchPending()
+  else fetchProcessed()
 }
 
-// ---------- 文案微调 ----------
+// ---------- 违禁词修正 ----------
 const drafts = reactive({})
-const savingId = ref('')
+const actingId = ref('')
+const acting = ref(false)
 
-watch(
-  () => approvalStore.pendingList,
-  (list) => {
-    // 为新到达的文案审批单初始化本地草稿
-    list.forEach((item) => {
-      if (item.type === 'copy' && !drafts[item.id]) {
-        drafts[item.id] = { title: item.title, content: item.content }
-      }
-    })
-  },
-  { deep: true, immediate: true },
-)
-
-function resetDraft(item) {
-  drafts[item.id].title = item.title
-  drafts[item.id].content = item.content
+function ensureDraft(row) {
+  if (!drafts[row.id]) drafts[row.id] = { title: row.title, content: row.content }
+  return drafts[row.id]
 }
 
-function applySuggestion(item, violation) {
-  const draft = drafts[item.id]
-  if (!draft.content.includes(violation.word)) {
-    ElMessage.info('当前正文中已不存在该词')
+function resetDraft(row) {
+  drafts[row.id].title = row.title
+  drafts[row.id].content = row.content
+}
+
+function applySuggestion(row, violation) {
+  const draft = ensureDraft(row)
+  if (!violation.suggestion) {
+    ElMessage.info('该风险词暂无系统建议，请手动修改标题或正文')
     return
   }
-  draft.content = draft.content.split(violation.word).join(violation.suggestion)
-  ElMessage.success(`已将「${violation.word}」替换为「${violation.suggestion}」`)
+  let hit = false
+  if ((draft.title || '').includes(violation.word)) {
+    draft.title = draft.title.split(violation.word).join(violation.suggestion)
+    hit = true
+  }
+  if ((draft.content || '').includes(violation.word)) {
+    draft.content = draft.content.split(violation.word).join(violation.suggestion)
+    hit = true
+  }
+  if (hit) ElMessage.success(`已将「${violation.word}」替换为「${violation.suggestion}」`)
+  else ElMessage.info('当前标题与正文中已不存在该词')
 }
 
-// 违禁词是否已从草稿正文中移除（用于按钮禁用与"已替换"态）
-function isResolved(item, word) {
-  const draft = drafts[item.id]
-  return !draft || !draft.content.includes(word)
+function isResolved(row, word) {
+  const draft = drafts[row.id]
+  const text = `${draft?.title || ''}${draft?.content || ''}`
+  return !draft || !text.includes(word)
 }
 
-function resolvedCount(item) {
-  return item.violations.filter((v) => isResolved(item, v.word)).length
+function resolvedCount(row) {
+  return (row.violations || []).filter((v) => isResolved(row, v.word)).length
 }
 
-async function handleSaveDraft(item) {
-  savingId.value = item.id
+async function handleClearCopy(row) {
+  actingId.value = row.id
   try {
-    const { version } = await approvalStore.saveDraft(item.id, drafts[item.id].content)
-    item.title = drafts[item.id].title
-    ElMessage.success(`微调内容已保存为 v${version}`)
+    const ad = await clearCopyReview(row.id, {
+      title: ensureDraft(row).title,
+      content: ensureDraft(row).content,
+    })
+    ElMessage.success(ad.stage === 'pending' ? '违禁词已放行，广告进入待审批' : '违禁词已放行，仍有预算问题待处置')
+    delete drafts[row.id]
+    await reloadAll()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.msg || e?.message || '放行失败，请稍后重试')
   } finally {
-    savingId.value = ''
+    actingId.value = ''
   }
 }
 
-// ---------- 审批操作 ----------
-const acting = ref(false)
+// ---------- 预算调整 ----------
+const budgetDialogVisible = ref(false)
+const budgetTarget = ref(null)
+const budgetInput = ref(0)
+
+function openBudgetDialog(row) {
+  budgetTarget.value = row
+  budgetInput.value = Number(row.budget || 0) || budgetReview.min_budget
+  budgetDialogVisible.value = true
+}
+
+async function confirmClearBudget() {
+  const amount = Number(budgetInput.value)
+  if (!amount || amount <= 0) {
+    ElMessage.warning('请填写有效的投放预算')
+    return
+  }
+  acting.value = true
+  try {
+    const ad = await clearBudgetReview(budgetTarget.value.id, { budget: amount })
+    ElMessage.success(ad.stage === 'pending' ? '预算已放行，广告进入待审批' : '预算已放行，仍有违禁词待处置')
+    budgetDialogVisible.value = false
+    await reloadAll()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.msg || e?.message || '放行失败，请稍后重试')
+  } finally {
+    acting.value = false
+  }
+}
+
+// ---------- 待审批操作 ----------
+async function handleApprove(item) {
+  try {
+    await ElMessageBox.confirm('确认通过该广告？通过后将进入「广告投放」。', '审批确认', {
+      type: 'warning', confirmButtonText: '确认通过', cancelButtonText: '再想想',
+    })
+  } catch {
+    return
+  }
+  actingId.value = item.id
+  try {
+    await approveAd(item.id, {})
+    ElMessage.success('审批通过，广告已进入投放候选')
+    await reloadAll()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.msg || e?.message || '审批失败')
+  } finally {
+    actingId.value = ''
+  }
+}
+
 const rejectDialogVisible = ref(false)
 const rejectTarget = ref(null)
 const rejectComment = ref('')
@@ -722,73 +604,20 @@ async function confirmReject() {
   }
   acting.value = true
   try {
-    await approvalStore.reject(rejectTarget.value.id, rejectComment.value.trim())
-    ElMessage.success('已驳回，结果将沿熔断环路回传')
+    await rejectAd(rejectTarget.value.id, { comment: rejectComment.value.trim() })
+    ElMessage.success('已驳回')
     rejectDialogVisible.value = false
+    await reloadAll()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.msg || e?.message || '驳回失败')
   } finally {
     acting.value = false
   }
 }
 
-async function handleApprove(item) {
-  try {
-    await ElMessageBox.confirm(
-      `确认通过该${APPROVAL_TYPE_META[item.type].label}？操作将在 2 秒内下发执行。`,
-      '审批确认',
-      { type: 'warning', confirmButtonText: '确认通过', cancelButtonText: '再想想' },
-    )
-  } catch {
-    return
-  }
-  acting.value = true
-  try {
-    await approvalStore.approve(item.id, {})
-    ElMessage.success('审批通过，已下发执行')
-  } finally {
-    acting.value = false
-  }
-}
-
-async function handleApproveCopy(item) {
-  const draft = drafts[item.id]
-  const edited = draft.content !== item.content || draft.title !== item.title
-  try {
-    await ElMessageBox.confirm(
-      edited
-        ? '将以微调后的内容通过并发布到平台，确认继续？'
-        : '未做修改，将按 Agent 原稿通过并发布，确认继续？',
-      '文案发布确认',
-      { type: 'warning', confirmButtonText: '确认通过并发布', cancelButtonText: '再想想' },
-    )
-  } catch {
-    return
-  }
-  acting.value = true
-  try {
-    await approvalStore.approve(item.id, {
-      edited_content: edited ? draft.content : undefined,
-      comment: edited ? '微调后通过' : '原稿通过',
-    })
-    ElMessage.success('文案审批通过，已进入发布队列')
-  } finally {
-    acting.value = false
-  }
-}
-
-function summaryOf(row) {
-  if (!row) return ''
-  if (row.type === 'copy') return `《${row.title || row.product_name}》→ ${PLATFORM_META[row.platform] || row.platform}`
-  if (row.type === 'pricing')
-    return `${row.product_name}：¥${row.current_price} → ¥${row.suggested_price}（${row.change_percent > 0 ? '+' : ''}${row.change_percent?.toFixed(2)}%）`
-  return row.campaign_name
-}
-
-onMounted(() => {
-  fetchReviewConfig()
-  fetchCopyReview()
-  fetchBudgetReview()
-  approvalStore.fetchPending()
-  approvalStore.fetchProcessed()
+onMounted(async () => {
+  await fetchReviewConfig()
+  await reloadAll()
 })
 </script>
 
@@ -797,11 +626,13 @@ onMounted(() => {
   margin-left: 6px;
 }
 
-/* ===== 审查中心 ===== */
 .review-config-hint {
   font-size: 12px;
   color: #6b7280;
   margin-left: auto;
+}
+.pipeline-steps {
+  margin-bottom: 16px;
 }
 .review-block {
   min-height: 200px;
@@ -827,23 +658,20 @@ onMounted(() => {
   border-radius: 8px;
   padding: 12px 14px;
 }
-.violation-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 6px;
-}
-.violation-chip-suggest {
-  font-size: 12px;
-  color: #909399;
-  margin-left: 4px;
+.approval-media {
+  width: 180px;
+  max-width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--card-border);
+  background: #000;
 }
 .budget-table {
   margin-top: 4px;
 }
-
-.approval-card.is-critical {
-  border-color: #f56c6c;
+.budget-hint {
+  margin-left: 12px;
+  font-size: 12px;
+  color: #909399;
 }
 
 .card-head {
@@ -878,19 +706,11 @@ onMounted(() => {
   align-items: center;
   justify-content: space-between;
 }
-.field-hint {
-  font-weight: 400;
-  font-size: 12px;
-  color: #909399;
-}
 .mt12 {
   margin-top: 12px;
 }
 .copy-textarea :deep(textarea) {
   line-height: 1.7;
-}
-.edit-title {
-  font-weight: 600;
 }
 
 .violation-box {
@@ -916,79 +736,11 @@ onMounted(() => {
   border-bottom-color: #e1f3d8;
   opacity: 0.75;
 }
-.resolved-text {
-  margin-left: 8px;
-  font-size: 12px;
-  color: #67c23a;
-  font-weight: 600;
-}
-.version-timeline {
-  padding-left: 4px;
-  margin-top: 8px;
-  max-height: 180px;
-  overflow-y: auto;
-}
-.version-timeline :deep(.el-timeline-item__timestamp) {
-  color: #909399;
-  font-size: 12px;
-}
 
-.price-compare {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  background: #f7f9fc;
-  border-radius: 10px;
-  padding: 16px 20px;
-}
-.price-box {
-  flex: 1;
-}
-.price-label {
-  font-size: 12px;
-  color: #909399;
-  margin-bottom: 4px;
-}
-.price-old {
-  font-size: 26px;
-  color: #909399;
-  text-decoration: line-through;
-  font-weight: 700;
-}
-.price-new {
-  font-size: 30px;
-  color: #f56c6c;
-  font-weight: 700;
-}
-.price-change {
-  font-size: 16px;
-}
-.risk-note {
-  margin-left: 10px;
-  font-size: 12px;
-  color: #606266;
-}
-.cheaper {
-  color: #67c23a;
-  font-weight: 700;
-}
-
-.danger-text {
-  color: #f56c6c;
-}
 .threshold-hint {
   font-size: 12px;
   color: #909399;
   margin-left: 6px;
-}
-.alloc-row {
-  margin-bottom: 12px;
-}
-.alloc-head {
-  display: flex;
-  justify-content: space-between;
-  font-size: 13px;
-  margin-bottom: 4px;
 }
 
 .card-footer {

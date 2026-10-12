@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { dashboardSocket } from '@/utils/websocket'
 import { USE_MOCK } from '@/api/mock'
-import { listApprovals } from '@/api'
+import { getReviewStats } from '@/api'
 
 // 全局应用状态：WebSocket 连接、待审批角标计数
 export const useAppStore = defineStore('app', () => {
@@ -12,8 +12,8 @@ export const useAppStore = defineStore('app', () => {
 
   async function refreshPendingCount() {
     try {
-      const list = await listApprovals({ status: 'pending' })
-      pendingCount.value = list.length
+      const stats = await getReviewStats()
+      pendingCount.value = stats.pending || 0
     } catch {
       // 角标刷新失败不打断页面
     }

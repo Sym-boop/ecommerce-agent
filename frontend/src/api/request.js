@@ -3,8 +3,9 @@ import { ElMessage } from 'element-plus'
 import { mockAdapter, USE_MOCK } from './mock'
 
 // 统一响应体约定（与后端对齐）：{ code: 0, msg: 'ok', data: ... }
+// 使用相对路径（默认 /api/v1）走 vite proxy / 同源反向代理，后端地址无需写死在业务代码中
 const service = axios.create({
-  baseURL: 'http://localhost:8000/api/v1',
+  baseURL: import.meta.env.VITE_API_BASE_URL || '/api/v1',
   timeout: 15000,
 })
 

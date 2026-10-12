@@ -23,6 +23,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from app.common import ad_store
+from app.common.pipeline import MIN_BUDGET, MAX_BUDGET, budget_verdict
 
 router = APIRouter(prefix="/api/v1/delivery", tags=["delivery"])
 
@@ -40,22 +41,9 @@ DELIVERY_PLATFORMS = [
 ]
 _PLATFORM_MAP = {p["value"]: p for p in DELIVERY_PLATFORMS}
 
-# 投放预算审查区间（元）：过低无有效曝光、超支存在资金风险，均需人工审查
-MIN_BUDGET = 1000
-MAX_BUDGET = 100000
-
 # 投放批次记录（进程内内存存储，需单 worker 运行）
 _LOCK = threading.Lock()
 _DELIVERIES: list[dict] = []
-
-
-def budget_verdict(budget: float) -> tuple[str, str]:
-    """按投放区间给出预算审查结论：over（超支）/ low（过低）/ normal（正常）。"""
-    if budget > MAX_BUDGET:
-        return "over", f"预算超支：¥{budget:,.0f} 超过单次投放上限 ¥{MAX_BUDGET:,}"
-    if budget < MIN_BUDGET:
-        return "low", f"预算过低：¥{budget:,.0f} 低于最低投放门槛 ¥{MIN_BUDGET:,}，难以获得有效曝光"
-    return "normal", f"预算正常：处于 ¥{MIN_BUDGET:,} ~ ¥{MAX_BUDGET:,} 合理区间"
 
 
 def list_records() -> list[dict]:
@@ -119,11 +107,15 @@ async def submit_delivery(payload: dict | None = None):
     if verdict != "normal":
         return fail(400, f"投放预算审查未通过：{verdict_msg}")
 
-    # 取出待投放的广告物料（以 ad_store 为准）
+    # 取出待投放的广告物料（以 ad_store 为准）；仅允许审批通过（stage=approved）的物料
     catalog = {ad["id"]: ad for ad in ad_store.list_ads()}
-    selected = [catalog[a] for a in ad_ids if a in catalog]
-    if not selected:
+    missing = [a for a in ad_ids if a not in catalog]
+    if missing:
         return fail(404, "勾选的广告物料不存在")
+    selected = [catalog[a] for a in ad_ids]
+    blocked = [ad["id"] for ad in selected if ad.get("stage") != "approved"]
+    if blocked:
+        return fail(400, "存在未审批通过的广告物料，请先在「审查中心」完成审查与审批")
 
     platform_meta = _PLATFORM_MAP[platform]
     submitted_at = datetime.now()

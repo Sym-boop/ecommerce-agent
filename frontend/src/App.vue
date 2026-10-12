@@ -29,10 +29,6 @@
         text-color="#c8d3e8"
         active-text-color="#ffffff"
       >
-        <el-menu-item index="/canvas">
-          <el-icon><Share /></el-icon>
-          <span>任务拓扑看板</span>
-        </el-menu-item>
         <el-menu-item index="/copy">
           <el-icon><EditPen /></el-icon>
           <span>文案生成</span>

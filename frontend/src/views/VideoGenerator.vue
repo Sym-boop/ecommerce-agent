@@ -52,6 +52,11 @@
               <span class="gen-tip">当前时长：{{ form.duration }} 秒</span>
             </el-form-item>
 
+            <el-form-item label="投放预算（元，选填）">
+              <el-input-number v-model="form.budget" :min="0" :step="1000" :controls="false" style="width: 200px" />
+              <span class="gen-budget-hint">填写后广告将自动送「预算审查」，异常需在审查中心处置</span>
+            </el-form-item>
+
             <el-button
               type="primary"
               size="large"
@@ -144,6 +149,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const form = reactive({
   prompt: '',
   duration: 10,
+  budget: null,
 })
 
 const fileList = ref([])
@@ -185,6 +191,7 @@ async function handleGenerate() {
   formData.append('image', file)
   formData.append('prompt', form.prompt.trim())
   formData.append('duration', String(form.duration))
+  formData.append('budget', form.budget == null ? '' : String(form.budget))
 
   try {
     const { task_id } = await generateVideo(formData)
@@ -235,5 +242,10 @@ function downloadVideo() {
 }
 .gen-submit {
   width: 100%;
+}
+.gen-budget-hint {
+  margin-left: 12px;
+  font-size: 12px;
+  color: #909399;
 }
 </style>

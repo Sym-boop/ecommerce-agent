@@ -87,9 +87,7 @@
             <el-tag v-if="ad.platform" size="small" effect="plain">
               {{ PLATFORM_META[ad.platform] || ad.platform }}
             </el-tag>
-            <el-tag size="small" type="success" effect="plain">
-              {{ ad.status === 'published' ? '已发售' : ad.status }}
-            </el-tag>
+            <el-tag size="small" type="success" effect="plain">已投放</el-tag>
           </div>
         </div>
       </div>
@@ -125,11 +123,13 @@ async function fetchAds() {
   }
 }
 
-const filtered = computed(() =>
-  typeFilter.value === 'all'
-    ? ads.value
-    : ads.value.filter((ad) => ad.type === typeFilter.value),
-)
+const filtered = computed(() => {
+  // 仅展示已投放（stage=delivered）的广告物料
+  const delivered = ads.value.filter((ad) => ad.stage === 'delivered')
+  return typeFilter.value === 'all'
+    ? delivered
+    : delivered.filter((ad) => ad.type === typeFilter.value)
+})
 
 /** 把时间归类为「今天 / 昨天 / YYYY-MM-DD」 */
 function dateLabel(iso) {

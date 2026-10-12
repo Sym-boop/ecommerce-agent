@@ -181,3 +181,38 @@ export function getCopyReview() {
 export function getBudgetReview() {
   return request.get('/review/budget')
 }
+
+/** 审查中心各阶段数量统计 { copy_review, budget_review, pending, approved, delivered, rejected } */
+export function getReviewStats() {
+  return request.get('/review/stats')
+}
+
+/** 待审批广告列表（两种审查均通过） */
+export function getReviewPending() {
+  return request.get('/review/pending')
+}
+
+/** 已处理广告列表（审批通过 / 驳回） */
+export function getReviewProcessed() {
+  return request.get('/review/processed')
+}
+
+/** 违禁词审查放行（可携带修正后的正文，重新扫描通过后放行） */
+export function clearCopyReview(adId, payload) {
+  return request.post(`/review/copy/${adId}/clear`, payload || {})
+}
+
+/** 预算审查放行（携带调整后的预算，重新校验通过后放行） */
+export function clearBudgetReview(adId, payload) {
+  return request.post(`/review/budget/${adId}/clear`, payload)
+}
+
+/** 待审批通过 → 广告进入「广告投放」候选 */
+export function approveAd(adId, payload) {
+  return request.post(`/review/approve/${adId}`, payload || {})
+}
+
+/** 审批驳回 → 广告进入「已处理」 */
+export function rejectAd(adId, payload) {
+  return request.post(`/review/reject/${adId}`, payload)
+}

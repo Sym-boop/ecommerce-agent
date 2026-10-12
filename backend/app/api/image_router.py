@@ -25,7 +25,7 @@ from fastapi.responses import JSONResponse
 
 from app.agent.copywriter import CopyWriterInput, generate_copy
 from app.agent.image_generator import generate_image
-from app.common import ad_store
+from app.common import pipeline
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -64,7 +64,8 @@ def _compose_copy(prompt: str, platform: str) -> tuple[str, str, list[str]]:
     return prompt[:40], prompt, []
 
 
-def _run_generation(task_id: str, prompt: str, platform: str, input_image_path: str | None) -> None:
+def _run_generation(task_id: str, prompt: str, platform: str,
+                    input_image_path: str | None, budget: float | None) -> None:
     task = IMAGE_TASKS.get(task_id)
     if task is None:
         return
@@ -79,7 +80,7 @@ def _run_generation(task_id: str, prompt: str, platform: str, input_image_path: 
             copy_title=title,
             copy_content=content,
         )
-        ad_store.add_ad(
+        pipeline.register_ad(
             ad_type="image",
             title=title,
             prompt=prompt,
@@ -87,6 +88,7 @@ def _run_generation(task_id: str, prompt: str, platform: str, input_image_path: 
             content=content,
             input_image=task.get("input_image_url"),
             result_url=image_url,
+            budget=budget,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("图文生成失败 task=%s: %s", task_id, exc)
@@ -94,11 +96,21 @@ def _run_generation(task_id: str, prompt: str, platform: str, input_image_path: 
         task["error"] = str(exc)
 
 
+def _parse_budget(raw) -> float | None:
+    if raw in (None, ""):
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 @router.post("/generate")
 async def generate_image_api(
     background: BackgroundTasks,
     prompt: str = Form(""),
     platform: str = Form("xiaohongshu"),
+    budget: str = Form(""),
     image: UploadFile | None = File(None),
 ):
     """提交图文生成任务：提示词 + 可选商品图片，返回 task_id 供前端轮询。"""
@@ -129,6 +141,7 @@ async def generate_image_api(
     background.add_task(
         _run_generation, task_id, prompt, platform,
         str(saved_path) if saved_path else None,
+        _parse_budget(budget),
     )
     return ok({"task_id": task_id})
 
