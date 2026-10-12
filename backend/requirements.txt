@@ -7,6 +7,7 @@ uvicorn[standard]>=0.30
 pydantic>=2.7
 pydantic-settings>=2.3
 python-dotenv>=1.0
+python-multipart>=0.0.9
 
 # 向量数据库
 pymilvus>=2.4,<3.0
@@ -17,6 +18,10 @@ redis>=5.0
 
 # HTTP 客户端（调用 OpenAI 兼容 Embedding API）
 httpx>=0.27
+
+# 图文海报渲染（Playwright 无头 Chromium）
+# 安装后需执行: playwright install chromium
+playwright>=1.44
 
 # 数据处理（load_knowledge.py 读取 CSV）
 pandas>=2.2

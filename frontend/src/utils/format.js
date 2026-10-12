@@ -42,6 +42,29 @@ export const PLATFORM_META = {
   amazon: '亚马逊',
 }
 
+/** 生成器页面可选平台（文案/图文共用） */
+export const PLATFORM_OPTIONS = [
+  { value: 'xiaohongshu', label: '小红书' },
+  { value: 'tiktok', label: 'TikTok' },
+  { value: 'amazon', label: '亚马逊' },
+]
+
+/** 后端静态资源根地址（与 api/request.js 的 baseURL 同源） */
+export const API_ORIGIN = 'http://localhost:8000'
+
+/**
+ * 把后端返回的媒体路径（如 data/media/images/x.png 或 /media/videos/x.mp4）
+ * 转成可直接访问的绝对地址；外部 http(s) 地址原样返回。
+ */
+export function mediaUrl(path) {
+  if (!path) return ''
+  if (/^https?:\/\//i.test(path)) return path
+  const rel = String(path)
+    .replace(/\\/g, '/')
+    .replace(/^.*?data\/media/, '/media')
+  return rel.startsWith('/') ? API_ORIGIN + rel : `${API_ORIGIN}/${rel}`
+}
+
 export const LOG_LEVEL_META = {
   info: { label: 'INFO', color: '#909399' },
   success: { label: ' OK ', color: '#67c23a' },

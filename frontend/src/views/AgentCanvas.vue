@@ -2,9 +2,7 @@
   <div class="canvas-page">
     <!-- ===== 顶部工具栏 ===== -->
     <div class="page-toolbar">
-      <el-button type="primary" :icon="Promotion" @click="goalDialogVisible = true">
-        下发运营目标
-      </el-button>
+      <span class="readonly-badge">只读视图 · 不可下发目标</span>
       <el-select
         :model-value="taskStore.currentId"
         placeholder="选择历史任务"
@@ -95,10 +93,8 @@
       <el-empty
         v-if="!taskStore.current"
         class="canvas-empty"
-        description="暂无任务，点击「下发运营目标」启动 Supervisor 调度链路"
-      >
-        <el-button type="primary" @click="goalDialogVisible = true">立即下发目标</el-button>
-      </el-empty>
+        description="暂无可查看的任务拓扑（该看板为只读视图）"
+      />
 
       <svg
         v-else
@@ -178,40 +174,56 @@
       </div>
     </div>
 
-    <!-- ===== 下发目标对话框 ===== -->
-    <el-dialog v-model="goalDialogVisible" title="下发运营目标" width="560px">
-      <el-form label-position="top">
-        <el-form-item label="运营目标（自然语言）" required>
-          <el-input
-            v-model="goalForm.goal"
-            type="textarea"
-            :rows="3"
-            placeholder="例如：给新品做一波小红书/TikTok 推广，并根据竞品价格给出调价建议"
-          />
-        </el-form-item>
-        <el-form-item label="广告总预算（元，≥50000 将触发预算熔断审批）">
-          <el-input-number v-model="goalForm.budget" :min="0" :step="5000" :max="500000" />
-        </el-form-item>
-        <el-form-item label="快捷示例">
-          <div class="quick-goals">
-            <el-tag
-              v-for="(q, i) in QUICK_GOALS"
-              :key="i"
-              class="quick-tag"
-              @click="goalForm.goal = q.goal; goalForm.budget = q.budget"
-            >
-              {{ q.label }}
+    <!-- ===== 执行过程：逐步 diff（每个 Agent 的输入 → 输出）===== -->
+    <div v-if="taskStore.current" class="diff-card">
+      <div class="diff-card-head">
+        <span class="diff-card-title">执行过程逐步对照 · 每个 Agent 的输入 → 输出</span>
+        <span class="diff-legend">
+          <span class="diff-legend-item is-minus">− 输入</span>
+          <span class="diff-legend-item is-plus">+ 输出</span>
+        </span>
+      </div>
+
+      <el-empty v-if="orderedNodes.length === 0" description="该任务暂无执行节点" :image-size="70" />
+
+      <div v-else class="diff-steps">
+        <div
+          v-for="(node, idx) in orderedNodes"
+          :key="node.id"
+          class="diff-step"
+          :class="`is-${node.status}`"
+        >
+          <div class="diff-step-head">
+            <span class="diff-step-index">{{ idx + 1 }}</span>
+            <span class="status-dot" :class="`is-${node.status}`"></span>
+            <span class="diff-step-name">{{ node.name }}</span>
+            <span class="mono diff-step-type">{{ node.type }}</span>
+            <el-tag :type="NODE_STATUS_META[node.status]?.type" size="small" effect="plain">
+              {{ NODE_STATUS_META[node.status]?.label }}
             </el-tag>
+            <span class="diff-step-time">{{ formatTime(node.started_at) }}</span>
+            <span v-if="node.error" class="diff-step-error">{{ node.error }}</span>
           </div>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="goalDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="taskStore.submitting" @click="handleSubmitGoal">
-          下发并调度
-        </el-button>
-      </template>
-    </el-dialog>
+
+          <div class="diff-panes">
+            <div class="diff-pane is-minus">
+              <div class="diff-pane-label">
+                <span class="diff-sign">−</span> 输入 INPUT
+              </div>
+              <pre v-if="node.input" class="diff-json">{{ prettyJson(node.input) }}</pre>
+              <pre v-else class="diff-json is-empty">（无输入）</pre>
+            </div>
+            <div class="diff-pane is-plus">
+              <div class="diff-pane-label">
+                <span class="diff-sign">+</span> 输出 OUTPUT
+              </div>
+              <pre v-if="node.output" class="diff-json">{{ prettyJson(node.output) }}</pre>
+              <pre v-else class="diff-json is-empty">（暂无输出）</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- ===== 节点详情抽屉 ===== -->
     <el-drawer
@@ -311,7 +323,7 @@ import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
-  Promotion, ZoomIn, ZoomOut, FullScreen, Refresh, CircleClose, RefreshRight,
+  ZoomIn, ZoomOut, FullScreen, Refresh, CircleClose, RefreshRight,
   Operation, EditPen, TrendCharts, Lock, CircleCheck, Money,
 } from '@element-plus/icons-vue'
 import { useTaskStore } from '@/stores/task'
@@ -358,27 +370,26 @@ function nodeSubText(node) {
   return '等待调度'
 }
 
-// ---------- 目标下发 ----------
-const goalDialogVisible = ref(false)
-const goalForm = reactive({ goal: '', budget: 0 })
-const QUICK_GOALS = [
-  { label: '🌸 新品种草推广', goal: '给新品法式碎花连衣裙做一波小红书和TikTok种草推广', budget: 0 },
-  { label: '📉 竞品跟价', goal: '监控降噪耳机Pro3的竞品价格，给出调价建议', budget: 0 },
-  { label: '🔥 大促全链路（含广告熔断）', goal: '黑五大促：新品连衣裙全平台种草推广、跟进竞品调价并加投千川信息流广告', budget: 80000 },
-]
+// ---------- 执行过程 diff：按执行顺序排列节点，展示输入 / 输出 ----------
+const orderedNodes = computed(() => {
+  const nodes = taskStore.current?.nodes || []
+  return nodes
+    .map((node, index) => ({ node, index }))
+    .sort((a, b) => {
+      const ta = a.node.started_at ? new Date(a.node.started_at).getTime() : Infinity
+      const tb = b.node.started_at ? new Date(b.node.started_at).getTime() : Infinity
+      if (ta !== tb) return ta - tb
+      return a.index - b.index
+    })
+    .map(({ node }) => node)
+})
 
-async function handleSubmitGoal() {
-  if (!goalForm.goal.trim()) {
-    ElMessage.warning('请先填写运营目标')
-    return
+function prettyJson(value) {
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
   }
-  await taskStore.submitGoal({ goal: goalForm.goal.trim(), budget: goalForm.budget || undefined })
-  goalDialogVisible.value = false
-  goalForm.goal = ''
-  goalForm.budget = 0
-  ElMessage.success('目标已下发，Supervisor 开始拆解调度')
-  await nextTick()
-  fitView()
 }
 
 async function handleCancel() {
@@ -755,5 +766,155 @@ watch(
 .drawer-actions {
   display: flex;
   gap: 10px;
+}
+
+/* ===== 只读物料展示 ===== */
+.readonly-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 8px;
+  background: #f4f6fa;
+  border: 1px solid var(--card-border);
+  color: #6b7280;
+  font-size: 13px;
+  white-space: nowrap;
+}
+/* ===== 执行过程 diff 视图 ===== */
+.diff-card {
+  margin-top: 16px;
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  background: #fff;
+  padding: 14px 16px 16px;
+}
+.diff-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.diff-card-title {
+  font-weight: 600;
+  color: #1d2b4f;
+}
+.diff-legend {
+  display: inline-flex;
+  gap: 14px;
+  font-size: 12px;
+}
+.diff-legend-item.is-minus {
+  color: #f56c6c;
+}
+.diff-legend-item.is-plus {
+  color: #2da44e;
+}
+
+.diff-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 520px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.diff-step {
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fafbfd;
+}
+.diff-step.is-failed {
+  border-color: #fbc4c4;
+}
+.diff-step-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  background: #f4f6fa;
+  border-bottom: 1px solid var(--card-border);
+  flex-wrap: wrap;
+}
+.diff-step-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #2e4c86;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.diff-step-name {
+  font-weight: 600;
+  color: #1d2b4f;
+}
+.diff-step-type {
+  font-size: 12px;
+  color: #909399;
+}
+.diff-step-time {
+  margin-left: auto;
+  font-size: 12px;
+  color: #909399;
+}
+.diff-step-error {
+  width: 100%;
+  font-size: 12px;
+  color: #f56c6c;
+}
+
+.diff-panes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+.diff-pane {
+  padding: 10px 12px;
+  min-width: 0;
+}
+.diff-pane.is-minus {
+  border-right: 1px solid var(--card-border);
+  background: #fff5f5;
+}
+.diff-pane.is-plus {
+  background: #f2fbf3;
+}
+.diff-pane-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.diff-pane.is-minus .diff-pane-label {
+  color: #f56c6c;
+}
+.diff-pane.is-plus .diff-pane-label {
+  color: #2da44e;
+}
+.diff-sign {
+  font-size: 15px;
+  line-height: 1;
+}
+.diff-json {
+  margin: 0;
+  font-family: 'JetBrains Mono', Consolas, Monaco, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #303133;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow: auto;
+}
+.diff-json.is-empty {
+  color: #b8bcc4;
+  font-style: italic;
 }
 </style>

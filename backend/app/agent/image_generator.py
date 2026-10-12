@@ -1,7 +1,15 @@
-"""图文生成 Agent：把文案转成小红书风格图片。"""
+"""图文生成 Agent：把文案渲染成小红书风格的宣传海报图片。
+
+支持两种模式：
+    - 提示词模式：仅根据文案生成海报（不嵌入商品图片）
+    - 图片 + 提示词模式：在海报中嵌入用户上传的商品图片
+
+图片以 base64 data URI 内联，避免 playwright 读取本地路径的权限问题。
+"""
+import base64
+import mimetypes
 import uuid
 from pathlib import Path
-from playwright.sync_api import sync_playwright
 
 OUTPUT_DIR = Path("data/media/images")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -19,6 +27,7 @@ HTML_TEMPLATE = """
         line-height: 1.3; margin-bottom: 40px;">
         {title}
     </h1>
+    {image_block}
     <p style="font-size: 36px; line-height: 1.8; color: #555;
         flex: 1; white-space: pre-wrap;">
         {content}
@@ -29,13 +38,48 @@ HTML_TEMPLATE = """
 </body></html>
 """
 
+IMAGE_BLOCK = """
+    <div style="text-align: center; margin-bottom: 40px;">
+        <img src="{src}" style="
+            max-width: 100%; max-height: 560px; border-radius: 24px;
+            box-shadow: 0 16px 40px rgba(0,0,0,0.18); object-fit: cover;
+        " />
+    </div>
+"""
 
-def generate_image(title: str, content: str, tags: list) -> str:
-    """生成单张图文，返回文件路径。"""
+
+def _to_data_uri(image_path: str) -> str:
+    """把本地商品图片转成 base64 data URI。"""
+    path = Path(image_path)
+    if not path.exists():
+        raise FileNotFoundError(f"商品图片不存在：{image_path}")
+    mime = mimetypes.guess_type(path.name)[0] or "image/png"
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:{mime};base64,{encoded}"
+
+
+def generate_image(title: str, content: str, tags: list, input_image_path: str | None = None) -> str:
+    """生成单张图文海报，返回文件路径。
+
+    input_image_path 为空时仅用文案渲染；否则把该商品图片嵌入海报顶部。
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as exc:
+        raise RuntimeError(
+            "未安装 playwright，无法渲染图文海报。请执行："
+            "pip install playwright && playwright install chromium"
+        ) from exc
+
+    image_block = ""
+    if input_image_path:
+        image_block = IMAGE_BLOCK.format(src=_to_data_uri(input_image_path))
+
     html = HTML_TEMPLATE.format(
         title=title,
         content=content,
         tags=" ".join(tags) if isinstance(tags, list) else str(tags),
+        image_block=image_block,
     )
     filename = OUTPUT_DIR / f"{uuid.uuid4().hex[:8]}.png"
 
@@ -60,6 +104,7 @@ def image_generator_node(state: dict) -> dict:
             title=copy_result.get("title", ""),
             content=copy_result.get("content", ""),
             tags=copy_result.get("tags", []),
+            input_image_path=state.get("input_image_path"),
         )
         return {
             "image_result": {"image_path": image_path},

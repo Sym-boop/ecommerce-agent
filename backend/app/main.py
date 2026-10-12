@@ -40,6 +40,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.common import task_engine
+from app.api.video_router import router as video_router
+from app.api.copy_router import router as copy_router
+from app.api.image_router import router as image_router
+from app.api.ads_router import router as ads_router
+from app.api.delivery_router import router as delivery_router
+from app.api.review_router import router as review_router
+from app.api.auth_router import router as auth_router
 from fastapi.staticfiles import StaticFiles
 
 
@@ -50,13 +57,26 @@ APP_VERSION = "0.1.0"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """生命周期：启动时探测依赖服务（失败不阻塞启动，状态经 /health 暴露）。"""
-    try:
-        from app.common.milvus_cli import get_client
-        get_client()
-        logger.info("Milvus 连接正常")
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Milvus 不可用（请确认 docker-compose 服务已启动）: %s", exc)
+    """生命周期：启动时探测依赖服务（失败不阻塞启动，状态经 /health 暴露）。
+
+    Milvus 探测放入后台线程并限时等待：VM / Milvus 未启动时不会阻塞服务启动。
+    """
+    import threading
+
+    def _probe_milvus() -> None:
+        try:
+            from app.common.milvus_cli import get_client
+            get_client()
+            logger.info("Milvus 连接正常")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Milvus 不可用（请确认 docker-compose 服务已启动）: %s", exc)
+
+    probe = threading.Thread(target=_probe_milvus, daemon=True)
+    probe.start()
+    probe.join(timeout=3)
+    if probe.is_alive():
+        logger.warning("Milvus 探测超时（>3s），服务以内存模式继续启动")
+
     yield
     from app.common.milvus_cli import close_client
     close_client()
@@ -84,6 +104,15 @@ app.add_middleware(
 
 Path("data/media").mkdir(parents=True, exist_ok=True)
 app.mount("/media", StaticFiles(directory="data/media"), name="media")
+
+# 独立生成模块 API（文案 / 图文 / 视频）+ 广告物料历史
+app.include_router(copy_router)
+app.include_router(image_router)
+app.include_router(video_router)
+app.include_router(ads_router)
+app.include_router(delivery_router)
+app.include_router(review_router)
+app.include_router(auth_router)
 # ---------------------------------------------------------------------------
 # 统一响应体
 # ---------------------------------------------------------------------------
@@ -104,10 +133,13 @@ def fail(status: int, msg: str) -> JSONResponse:
 def health() -> dict:
     """健康检查：返回各依赖服务的可用状态。"""
     milvus_ok = redis_ok = False
+    knowledge_base_rows = 0
     try:
-        from app.common.milvus_cli import get_client
-        get_client().list_collections()
+        from app.common.milvus_cli import get_wrapper
+        wrapper = get_wrapper()
+        wrapper.client.list_collections()  # 真正探测连通性（不可达会抛错）
         milvus_ok = True
+        knowledge_base_rows = wrapper.count() if wrapper.has_collection() else 0
     except Exception:  # noqa: BLE001
         pass
     try:
@@ -121,6 +153,7 @@ def health() -> dict:
         "status": "ok" if (milvus_ok and redis_ok) else "degraded",
         "version": APP_VERSION,
         "milvus": milvus_ok,
+        "knowledge_base_rows": knowledge_base_rows,
         "redis": redis_ok,
     }
 

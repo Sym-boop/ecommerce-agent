@@ -3,6 +3,26 @@
     <!-- ===== 顶部筛选 ===== -->
     <div class="page-toolbar">
       <el-radio-group v-model="activeTab" @change="onTabChange">
+        <el-radio-button value="copy-review">
+          文案违禁词审查
+          <el-badge
+            v-if="copyReview.failed_count"
+            :value="copyReview.failed_count"
+            :max="99"
+            type="danger"
+            class="tab-badge"
+          />
+        </el-radio-button>
+        <el-radio-button value="budget-review">
+          投放预算审查
+          <el-badge
+            v-if="budgetReview.abnormal_count"
+            :value="budgetReview.abnormal_count"
+            :max="99"
+            type="danger"
+            class="tab-badge"
+          />
+        </el-radio-button>
         <el-radio-button value="pending">
           待审批
           <el-badge
@@ -16,6 +36,7 @@
       </el-radio-group>
 
       <el-select
+        v-if="isApprovalTab"
         v-model="approvalStore.filters.type"
         placeholder="全部类型"
         clearable
@@ -28,6 +49,7 @@
       </el-select>
 
       <el-date-picker
+        v-if="isApprovalTab"
         v-model="dateRange"
         type="daterange"
         value-format="YYYY-MM-DD"
@@ -38,11 +60,135 @@
         @change="onDateChange"
       />
 
+      <span v-if="!isApprovalTab && reviewConfig" class="review-config-hint">
+        违禁词库 {{ reviewConfig.banned_word_count }} 条 ·
+        投放预算区间 ¥{{ reviewConfig.min_budget.toLocaleString() }} ~ ¥{{ reviewConfig.max_budget.toLocaleString() }}
+      </span>
+
       <el-button :icon="Refresh" @click="reload">刷新</el-button>
     </div>
 
+    <!-- ===== 文案违禁词审查 ===== -->
+    <div v-if="activeTab === 'copy-review'" v-loading="copyLoading" class="review-block">
+      <el-alert
+        class="review-summary"
+        :type="copyReview.failed_count ? 'warning' : 'success'"
+        :closable="false"
+        show-icon
+        :title="`共审查 ${copyReview.total} 条文案广告，命中违禁词 ${copyReview.failed_count} 条，通过 ${copyReview.passed_count} 条`"
+      >
+        <div class="review-summary-desc">
+          依据 <span class="mono">{{ reviewConfig?.banned_word_source || 'data/raw/forbidden_words.txt' }}</span>
+          违禁词库（{{ reviewConfig?.banned_word_count ?? 0 }} 条）逐条扫描文案标题与正文。
+        </div>
+      </el-alert>
+
+      <el-empty v-if="!copyLoading && copyReview.items.length === 0" description="暂无可审查的文案广告，请先在「文案生成」页创作" />
+
+      <el-space v-else direction="vertical" fill :size="14" style="display: flex">
+        <el-card
+          v-for="row in copyReview.items"
+          :key="row.ad_id"
+          shadow="hover"
+          class="review-card"
+          :class="{ 'is-abnormal': !row.passed }"
+        >
+          <template #header>
+            <div class="card-head">
+              <div class="card-head-left">
+                <el-tag :type="row.passed ? 'success' : 'danger'" effect="dark">
+                  {{ row.passed ? '审查通过' : '命中违禁词' }}
+                </el-tag>
+                <span class="card-title">{{ row.title || '（无标题）' }}</span>
+                <span class="mono card-sku">{{ row.ad_id }}</span>
+              </div>
+              <span class="mono card-time">{{ formatTime(row.created_at) }}</span>
+            </div>
+          </template>
+
+          <div class="review-copy-body">{{ row.content }}</div>
+
+          <el-alert
+            v-if="row.violations.length"
+            type="error"
+            :closable="false"
+            show-icon
+            class="mt12"
+            :title="`命中 ${row.violations.length} 处违禁词 / 风险表达`"
+          >
+            <div class="violation-list">
+              <el-tag
+                v-for="(v, i) in row.violations"
+                :key="i"
+                type="danger"
+                effect="plain"
+                class="violation-chip"
+              >
+                {{ v.word }}
+                <span v-if="v.suggestion" class="violation-chip-suggest">→ {{ v.suggestion }}</span>
+              </el-tag>
+            </div>
+          </el-alert>
+          <el-alert
+            v-else
+            type="success"
+            :closable="false"
+            show-icon
+            class="mt12"
+            title="未命中违禁词，文案可安全投放"
+          />
+        </el-card>
+      </el-space>
+    </div>
+
+    <!-- ===== 投放预算审查 ===== -->
+    <div v-else-if="activeTab === 'budget-review'" v-loading="budgetLoading" class="review-block">
+      <el-alert
+        class="review-summary"
+        :type="budgetReview.abnormal_count ? 'warning' : 'success'"
+        :closable="false"
+        show-icon
+        :title="`共审查 ${budgetReview.total} 个投放批次，预算异常 ${budgetReview.abnormal_count} 个`"
+      >
+        <div class="review-summary-desc">
+          审查区间：¥{{ budgetReview.min_budget?.toLocaleString() }} ~
+          ¥{{ budgetReview.max_budget?.toLocaleString() }}；低于下限视为预算过低，高于上限视为预算超支（超支将在投放时被拦截）。
+        </div>
+      </el-alert>
+
+      <el-empty v-if="!budgetLoading && budgetReview.items.length === 0" description="暂无投放批次，请先在「广告投放」页发起投放（投放需填写预算）" />
+
+      <el-table v-else :data="budgetReview.items" stripe border class="budget-table">
+        <el-table-column prop="batch_id" label="投放批次" width="200" class-name="mono" />
+        <el-table-column label="目标平台" width="130">
+          <template #default="{ row }">{{ row.platform_label || row.platform }}</template>
+        </el-table-column>
+        <el-table-column label="投放预算" width="140" align="right">
+          <template #default="{ row }">¥{{ Number(row.budget).toLocaleString() }}</template>
+        </el-table-column>
+        <el-table-column label="审查结论" width="120">
+          <template #default="{ row }">
+            <el-tag :type="VERDICT_META[row.verdict]?.type" effect="dark" size="small">
+              {{ VERDICT_META[row.verdict]?.label }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="说明" min-width="240">
+          <template #default="{ row }">{{ row.message }}</template>
+        </el-table-column>
+        <el-table-column label="投放结果" width="140">
+          <template #default="{ row }">
+            成功 {{ row.success_count }} / 失败 {{ row.failed_count }}
+          </template>
+        </el-table-column>
+        <el-table-column label="投放时间" width="170">
+          <template #default="{ row }">{{ formatTime(row.submitted_at) }}</template>
+        </el-table-column>
+      </el-table>
+    </div>
+
     <!-- ===== 待审批列表 ===== -->
-    <div v-loading="approvalStore.loading">
+    <div v-else v-loading="approvalStore.loading">
       <template v-if="activeTab === 'pending'">
         <el-empty
           v-if="approvalStore.pendingList.length === 0"
@@ -411,6 +557,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Right } from '@element-plus/icons-vue'
 import { useApprovalStore } from '@/stores/approval'
+import { getCopyReview, getBudgetReview, getReviewConfig } from '@/api'
 import {
   formatTime,
   PLATFORM_META,
@@ -419,13 +566,61 @@ import {
 } from '@/utils/format'
 
 const approvalStore = useApprovalStore()
-const activeTab = ref('pending')
+const activeTab = ref('copy-review')
 const dateRange = ref(null)
 
 const RISK_META = {
   low: { label: '低风险', type: 'success' },
   medium: { label: '中风险', type: 'warning' },
   high: { label: '高风险', type: 'danger' },
+}
+
+// 预算审查结论
+const VERDICT_META = {
+  normal: { label: '正常', type: 'success' },
+  over: { label: '预算超支', type: 'danger' },
+  low: { label: '预算过低', type: 'warning' },
+}
+
+const isApprovalTab = computed(() => activeTab.value === 'pending' || activeTab.value === 'processed')
+
+// ---------- 审查中心数据 ----------
+const reviewConfig = ref(null)
+const copyLoading = ref(false)
+const budgetLoading = ref(false)
+const copyReview = reactive({ items: [], total: 0, failed_count: 0, passed_count: 0 })
+const budgetReview = reactive({ items: [], total: 0, abnormal_count: 0, min_budget: 0, max_budget: 0 })
+
+async function fetchReviewConfig() {
+  try {
+    reviewConfig.value = await getReviewConfig()
+  } catch {
+    reviewConfig.value = null
+  }
+}
+
+async function fetchCopyReview() {
+  copyLoading.value = true
+  try {
+    const res = await getCopyReview()
+    Object.assign(copyReview, res)
+  } catch {
+    Object.assign(copyReview, { items: [], total: 0, failed_count: 0, passed_count: 0 })
+  } finally {
+    copyLoading.value = false
+  }
+}
+
+async function fetchBudgetReview() {
+  budgetLoading.value = true
+  try {
+    const res = await getBudgetReview()
+    Object.assign(budgetReview, res)
+  } catch {
+    Object.assign(budgetReview, { items: [], total: 0, abnormal_count: 0, min_budget: 0, max_budget: 0 })
+  } finally {
+    budgetLoading.value = false
+  }
 }
 
 const pendingCopies = computed(() => approvalStore.pendingList.filter((a) => a.type === 'copy'))
@@ -449,8 +644,10 @@ function onTabChange() {
 }
 
 function reload() {
-  if (activeTab.value === 'pending') approvalStore.fetchPending()
-  else approvalStore.fetchProcessed()
+  if (activeTab.value === 'copy-review') fetchCopyReview()
+  else if (activeTab.value === 'budget-review') fetchBudgetReview()
+  else if (activeTab.value === 'pending') approvalStore.fetchPending()
+  else if (activeTab.value === 'processed') approvalStore.fetchProcessed()
 }
 
 // ---------- 文案微调 ----------
@@ -587,6 +784,9 @@ function summaryOf(row) {
 }
 
 onMounted(() => {
+  fetchReviewConfig()
+  fetchCopyReview()
+  fetchBudgetReview()
   approvalStore.fetchPending()
   approvalStore.fetchProcessed()
 })
@@ -595,6 +795,51 @@ onMounted(() => {
 <style scoped>
 .tab-badge {
   margin-left: 6px;
+}
+
+/* ===== 审查中心 ===== */
+.review-config-hint {
+  font-size: 12px;
+  color: #6b7280;
+  margin-left: auto;
+}
+.review-block {
+  min-height: 200px;
+}
+.review-summary {
+  margin-bottom: 14px;
+}
+.review-summary-desc {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #606266;
+  line-height: 1.6;
+}
+.review-card.is-abnormal {
+  border-color: #f56c6c;
+}
+.review-copy-body {
+  white-space: pre-wrap;
+  line-height: 1.75;
+  font-size: 13px;
+  color: #303133;
+  background: #f7f9fc;
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.violation-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+.violation-chip-suggest {
+  font-size: 12px;
+  color: #909399;
+  margin-left: 4px;
+}
+.budget-table {
+  margin-top: 4px;
 }
 
 .approval-card.is-critical {

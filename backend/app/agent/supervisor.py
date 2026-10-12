@@ -149,24 +149,28 @@ def supervisor_node(state: SupervisorState) -> dict:
             sub = copywriter_task(state)
         elif task["type"] == "pricing":
             sub = pricing_task(state)
-	elif task["type"] == "image":
-            sub = image_generator_node(state)      # ← 新
-    	elif task["type"] == "video":
-            sub = video_generator_node(state)      # ← 新
-    	else:
-        	continue
+        elif task["type"] == "image":
+            sub = image_generator_node(state)
+        elif task["type"] == "video":
+            sub = video_generator_node(state)
+        else:
+            continue
 
         if sub.get("status") == "failed":
             has_error = True
             result["error"] = sub.get("error", "子任务失败")
 
         result.update(sub)
+        # 将子 Agent 产出回写到 state，供后续依赖节点（图文/视频）读取上游结果
+        state.update(sub)
 
         if sub.get("copy_result") is not None:
             result["results"]["copywriter"] = sub["copy_result"]
         if sub.get("price_result") is not None:
             result["results"]["pricing"] = sub["price_result"]
-    	if sub.get("video_result") is not None:
+        if sub.get("image_result") is not None:
+            result["results"]["image"] = sub["image_result"]
+        if sub.get("video_result") is not None:
             result["results"]["video"] = sub["video_result"]
 
     # 审批熔断 + 状态保留
@@ -183,8 +187,7 @@ def supervisor_node(state: SupervisorState) -> dict:
         result["status"] = "failed" if has_error else "done"
         logger.info("任务 %s 执行结束，状态：%s", state["task_id"], result["status"])
 
-
-    	return result
+    return result
 
 
 # ============================================

@@ -16,6 +16,10 @@ from typing import Any, List, Optional
 _ROOT = Path(__file__).resolve().parents[3]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
+# 保证 backend/ 在 path 上，使 `app.*` 在任意启动目录都可导入（单一模块实例）
+_BACKEND = Path(__file__).resolve().parents[2]
+if str(_BACKEND) not in sys.path:
+    sys.path.insert(0, str(_BACKEND))
 
 try:
     from dotenv import load_dotenv
@@ -89,7 +93,7 @@ def retrieve_similar_copy(category: str, platform: str, top_k: int = 3) -> List[
     失败时 fallback 到空列表（不阻断流程）。
     """
     try:
-        from backend.app.common.milvus_cli import search  # type: ignore
+        from app.common.milvus_cli import search  # type: ignore
 
         filters: dict[str, Any] = {"platform": platform}
         res = search(query_text=category, top_k=top_k, filters=filters)

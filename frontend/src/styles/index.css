@@ -197,3 +197,138 @@ body {
   font-weight: 600;
   border-bottom: 1px dashed #f56c6c;
 }
+
+/* ===== 生成器页面统一风格（文案 / 图文 / 视频） ===== */
+.gen-page {
+  max-width: 1320px;
+  margin: 0 auto;
+}
+
+.gen-hero {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: linear-gradient(120deg, #1d2b4f 0%, #243b6b 55%, #2e4c86 100%);
+  border-radius: 14px;
+  padding: 20px 26px;
+  color: #fff;
+  margin-bottom: 18px;
+  box-shadow: 0 6px 20px rgba(29, 43, 79, 0.22);
+}
+.gen-hero-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.14);
+  flex-shrink: 0;
+}
+.gen-hero-title {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  margin: 0 0 4px;
+}
+.gen-hero-desc {
+  margin: 0;
+  font-size: 13px;
+  color: #b8c6e0;
+  line-height: 1.6;
+}
+
+.gen-card {
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+}
+.gen-card + .gen-card {
+  margin-top: 0;
+}
+.gen-card .el-card__header {
+  font-weight: 600;
+  color: #1d2b4f;
+}
+
+.gen-tip {
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.gen-result-empty {
+  padding: 46px 0;
+}
+
+.gen-result {
+  animation: gen-fade 0.35s ease;
+}
+@keyframes gen-fade {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.gen-result-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: #303133;
+  line-height: 1.5;
+  margin: 0 0 10px;
+}
+.gen-result-body {
+  background: #f7f9fc;
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  font-size: 14px;
+  line-height: 1.9;
+  color: #4b5563;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.gen-result-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.gen-result-img {
+  width: 100%;
+  max-width: 420px;
+  border-radius: 12px;
+  border: 1px solid var(--card-border);
+  display: block;
+}
+.gen-result-video {
+  width: 100%;
+  max-width: 560px;
+  border-radius: 12px;
+  border: 1px solid var(--card-border);
+  background: #000;
+  display: block;
+}
+
+.gen-upload-hint {
+  color: #909399;
+  font-size: 12px;
+  margin-top: 8px;
+}
+.gen-uploader .el-upload--picture-card {
+  border-radius: 10px;
+}
+.gen-progress {
+  margin-top: 16px;
+}
+.gen-progress-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #909399;
+  margin-bottom: 6px;
+}

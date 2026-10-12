@@ -37,6 +37,8 @@ from typing import Any, Awaitable, Callable
 COPY_KEYWORDS = ["文案", "推广", "小红书", "TikTok", "亚马逊", "种草", "图文", "Listing"]
 PRICE_KEYWORDS = ["调价", "定价", "竞品", "价格", "降价", "涨价", "跟价"]
 ADS_KEYWORDS = ["广告", "投放", "出价", "千川", "预算", "巨量", "Meta", "加投"]
+IMAGE_KEYWORDS = ["图文", "图片", "配图"]
+VIDEO_KEYWORDS = ["视频", "短视频", "动态"]
 
 ADS_BUDGET_THRESHOLD = 50000   # 总预算熔断阈值（元）
 BID_THRESHOLD = 2.0            # 单次出价熔断阈值（元）
@@ -126,7 +128,14 @@ def _build_task(payload: dict) -> dict:
         "copy": any(k in goal for k in COPY_KEYWORDS),
         "pricing": any(k in goal for k in PRICE_KEYWORDS),
         "ads": any(k in goal for k in ADS_KEYWORDS) or (budget or 0) >= ADS_BUDGET_THRESHOLD,
+        "image": any(k in goal for k in IMAGE_KEYWORDS),
+        "video": any(k in goal for k in VIDEO_KEYWORDS),
     }
+    # 依赖关系：视频依赖图文，图文/视频都依赖文案（需先有文案稿）
+    if needs["video"]:
+        needs["image"] = True
+    if needs["image"]:
+        needs["copy"] = True
     if not any(needs.values()):
         needs["copy"] = True  # 与 mock 一致：无识别结果默认跑文案，保证可用
 
