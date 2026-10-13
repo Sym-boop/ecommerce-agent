@@ -1,7 +1,7 @@
 """充值中心 API（最小实现，仅提供「可看」的账单 / 充值接口）。
 
 用途：为图文生成 Agent 的独立 API 提供账户余额与点数充值展示。
-后端仅做 Mock 记账（进程内内存），不接入真实支付渠道。
+后端仅做 Mock 记账（落盘到 <仓库根>/data/billing.json），不接入真实支付渠道。
 
 端点：
     GET  /api/v1/billing/account    账户概览（余额 / 点数 / 图文 API 配额）
@@ -18,9 +18,12 @@ from datetime import datetime
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
+from app.common import json_store
+
 router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
 
 _LOCK = threading.Lock()
+_BILLING_FILE = "billing.json"
 
 # 充值套餐（元 → 点数 + 赠送比例）
 PACKAGES = [
@@ -38,7 +41,7 @@ def _now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
-_ACCOUNT = {
+_DEFAULT_ACCOUNT = {
     "account_id": "ACC-1000001",
     "balance": 500.0,          # 账户余额（元）
     "credits": 20000,          # 可用点数
@@ -46,12 +49,22 @@ _ACCOUNT = {
     "updated_at": _now_iso(),
 }
 
-_INVOICES: list[dict] = [
+_DEFAULT_INVOICES: list[dict] = [
     {"id": "INV-0000002", "type": "consume", "title": "图文生成消耗", "amount": 0, "credits": -120,
      "created_at": _now_iso(), "status": "已扣减"},
     {"id": "INV-0000001", "type": "recharge", "title": "新用户赠送", "amount": 0, "credits": 20000,
      "created_at": _now_iso(), "status": "已完成"},
 ]
+
+# 账户与流水落盘到 <仓库根>/data/billing.json，进程重启后不丢
+_billing = json_store.read_dict(_BILLING_FILE, {})
+_ACCOUNT: dict = _billing.get("account") or dict(_DEFAULT_ACCOUNT)
+_INVOICES: list[dict] = _billing.get("invoices") or list(_DEFAULT_INVOICES)
+
+
+def _persist() -> None:
+    """把账户与流水原子写盘（调用方需持有 _LOCK）。"""
+    json_store.write_json(_BILLING_FILE, {"account": _ACCOUNT, "invoices": _INVOICES})
 
 
 def ok(data=None) -> dict:
@@ -108,6 +121,7 @@ async def billing_recharge(payload: dict | None = None):
         _ACCOUNT["total_recharged"] = round(_ACCOUNT["total_recharged"] + pkg["amount"], 2)
         _ACCOUNT["updated_at"] = _now_iso()
         _INVOICES.insert(0, invoice)
+        _persist()
         snapshot = dict(_ACCOUNT)
 
     return ok({"account": snapshot, "invoice": invoice,

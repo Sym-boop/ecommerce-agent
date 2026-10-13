@@ -1,4 +1,4 @@
-"""广告物料仓库（进程内内存存储）。
+"""广告物料仓库（JSON 落盘，进程重启后不丢）。
 
 统一记录各生成模块（文案 / 图文 / 视频）成功产出的广告物料，并承载
 「生成 → 审查 → 审批 → 投放 → 历史」的流水线状态机，供：
@@ -19,7 +19,7 @@
     violations  命中的违禁词明细
     budget      该广告的投放预算（元），None 表示未设置（视为通过预算审查）
 
-注意：与 task_engine 一致为进程内内存存储，需单 worker 运行。
+持久化：落盘到 <仓库根>/data/ads.json（原子写入），进程重启后数据不丢。
 """
 from __future__ import annotations
 
@@ -27,8 +27,19 @@ import threading
 import uuid
 from datetime import datetime, timedelta
 
+from app.common import json_store
+
 _LOCK = threading.Lock()
-_ADS: list[dict] = []
+_AD_FILE = "ads.json"
+# 数据文件在启动时是否已存在：决定要不要写入演示数据（用户删空后不再自动重建）
+_AD_FILE_EXISTED = json_store.exists(_AD_FILE)
+# 广告物料落盘到 <仓库根>/data/ads.json，进程重启后不丢
+_ADS: list[dict] = json_store.read_list(_AD_FILE, [])
+
+
+def _persist() -> None:
+    """把当前广告物料原子写盘（调用方需持有 _LOCK）。"""
+    json_store.write_json(_AD_FILE, _ADS)
 
 
 def add_ad(
@@ -79,6 +90,7 @@ def add_ad(
     }
     with _LOCK:
         _ADS.insert(0, record)
+        _persist()
     return record
 
 
@@ -101,6 +113,7 @@ def update_ad(ad_id: str, **patch) -> dict | None:
         if ad is None:
             return None
         ad.update(patch)
+        _persist()
         return ad
 
 
@@ -109,7 +122,10 @@ def delete_ad(ad_id: str) -> bool:
     with _LOCK:
         before = len(_ADS)
         _ADS[:] = [a for a in _ADS if a["id"] != ad_id]
-        return len(_ADS) != before
+        removed = len(_ADS) != before
+        if removed:
+            _persist()
+        return removed
 
 
 def mark_delivered(ad_ids: list[str], platform: str = "", status: str = "delivered") -> int:
@@ -126,11 +142,14 @@ def mark_delivered(ad_ids: list[str], platform: str = "", status: str = "deliver
                 if platform:
                     ad["delivery_platform"] = platform
                 updated += 1
+        if updated:
+            _persist()
     return updated
 
 
 # ---------------------------------------------------------------------------
 # 演示数据：预置几条已发售的历史广告，便于「历史广告发售」首次打开即有内容
+# 仅在 <仓库根>/data/ads.json 不存在时写入一次；用户删空后不再自动重建。
 # ---------------------------------------------------------------------------
 
 _DEMO_COPY = [
@@ -142,9 +161,9 @@ _DEMO_COPY = [
 
 
 def seed_demo() -> None:
-    """写入演示历史数据（仅当仓库为空时执行一次）。"""
+    """写入演示历史数据（仅当数据文件不存在时执行一次）。"""
     with _LOCK:
-        if _ADS:
+        if _AD_FILE_EXISTED or _ADS:
             return
     now = datetime.now()
     for name, platform, title, content, days_ago in _DEMO_COPY:

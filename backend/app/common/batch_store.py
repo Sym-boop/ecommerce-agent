@@ -7,7 +7,7 @@
                  └─ 视频节点（批量 M，1 ≤ M ≤ 5）
 
 每个节点都可单独「重新生成」；每一级（文案 / 图文 / 视频）支持「一键保存 / 一键重新生成」。
-节点保存在进程内内存中（需单 worker 运行），批量生成结束后可整体保存到广告流水线与历史记录。
+节点落盘到 <仓库根>/data/batch_sessions.json（原子写入），刷新页面 / 重启进程后仍可回看。
 
 节点字段：
     id, type(copy|image|video), parent_id, index, title, content, tags,
@@ -20,8 +20,17 @@ import threading
 import uuid
 from datetime import datetime
 
+from app.common import json_store
+
 _LOCK = threading.Lock()
-_SESSIONS: dict[str, dict] = {}
+_BATCH_FILE = "batch_sessions.json"
+# 批量生成会话落盘到 <仓库根>/data/batch_sessions.json，进程重启后不丢
+_SESSIONS: dict[str, dict] = json_store.read_dict(_BATCH_FILE, {})
+
+
+def _persist() -> None:
+    """把全部批量生成会话原子写盘（调用方需持有 _LOCK）。"""
+    json_store.write_json(_BATCH_FILE, _SESSIONS)
 
 MAX_COPY_BATCH = 8
 MAX_ASSET_BATCH = 5
@@ -44,6 +53,7 @@ def create_session(*, product: dict, keyword: str = "", platform: str = "xiaohon
     }
     with _LOCK:
         _SESSIONS[batch_id] = session
+        _persist()
     return session
 
 
@@ -54,7 +64,10 @@ def get_session(batch_id: str) -> dict | None:
 
 def delete_session(batch_id: str) -> bool:
     with _LOCK:
-        return _SESSIONS.pop(batch_id, None) is not None
+        removed = _SESSIONS.pop(batch_id, None) is not None
+        if removed:
+            _persist()
+        return removed
 
 
 def add_node(batch_id: str, *, node_type: str, parent_id: str | None = None,
@@ -82,6 +95,7 @@ def add_node(batch_id: str, *, node_type: str, parent_id: str | None = None,
         }
         node.update(fields)
         session["nodes"].append(node)
+        _persist()
         return dict(node)
 
 
@@ -102,6 +116,7 @@ def update_node(batch_id: str, node_id: str, **patch) -> dict | None:
         if node is None:
             return None
         node.update(patch)
+        _persist()
         return dict(node)
 
 

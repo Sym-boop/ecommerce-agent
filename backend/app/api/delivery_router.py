@@ -28,7 +28,7 @@ from datetime import datetime
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from app.common import ad_store
+from app.common import ad_store, json_store
 from app.common.pipeline import MIN_BUDGET, MAX_BUDGET, budget_verdict
 
 router = APIRouter(prefix="/api/v1/delivery", tags=["delivery"])
@@ -106,9 +106,15 @@ DELIVERY_PLATFORMS = [
 ]
 _PLATFORM_MAP = {p["value"]: p for p in DELIVERY_PLATFORMS}
 
-# 投放批次记录（进程内内存存储，需单 worker 运行）
+# 投放批次记录（落盘到 <仓库根>/data/deliveries.json，进程重启后不丢）
 _LOCK = threading.Lock()
-_DELIVERIES: list[dict] = []
+_DEL_FILE = "deliveries.json"
+_DELIVERIES: list[dict] = json_store.read_list(_DEL_FILE, [])
+
+
+def _persist_deliveries() -> None:
+    """把投放批次原子写盘（调用方需持有 _LOCK）。"""
+    json_store.write_json(_DEL_FILE, _DELIVERIES)
 
 
 def list_records() -> list[dict]:
@@ -288,4 +294,5 @@ async def submit_delivery(payload: dict | None = None):
     }
     with _LOCK:
         _DELIVERIES.insert(0, record)
+        _persist_deliveries()
     return ok(record)

@@ -26,7 +26,7 @@ from fastapi import APIRouter, BackgroundTasks, File, Form, UploadFile
 from fastapi.responses import JSONResponse
 
 from app.agent import ad_graph
-from app.common import history_store, pipeline
+from app.common import history_store, json_store, pipeline
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -37,8 +37,16 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 ALLOWED_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 
 _LOCK = threading.Lock()
-_SESSIONS: dict[str, dict] = {}
+_ADGEN_FILE = "adgen_sessions.json"
+# 生成会话落盘到 <仓库根>/data/adgen_sessions.json，刷新页面 / 重启进程后仍可回填
+_SESSIONS: dict[str, dict] = json_store.read_dict(_ADGEN_FILE, {})
+# 图文 / 视频异步任务为运行期状态，进程重启即失效，无需落盘
 _ASSET_TASKS: dict[str, dict] = {}
+
+
+def _persist_sessions() -> None:
+    """把全部生成会话原子写盘（调用方需持有 _LOCK）。"""
+    json_store.write_json(_ADGEN_FILE, _SESSIONS)
 
 
 def ok(data=None) -> dict:
@@ -66,6 +74,7 @@ def _new_session() -> dict:
     }
     with _LOCK:
         _SESSIONS[session["session_id"]] = session
+        _persist_sessions()
     return session
 
 
@@ -143,6 +152,7 @@ async def generate_copy_api(payload: dict | None = None):
             "video": {},
             "status": "review_required" if ad_graph.is_interrupted(result) else "copy_ready",
         })
+        _persist_sessions()
         snapshot = dict(session)
 
     return ok(snapshot)
@@ -173,6 +183,7 @@ async def review_copy_api(session_id: str, payload: dict | None = None):
             "review": result.get("review") or {},
             "status": "review_rejected" if result.get("status") == "rejected" else "copy_ready",
         })
+        _persist_sessions()
         snapshot = dict(session)
     return ok(snapshot)
 
@@ -201,12 +212,14 @@ def _run_asset(task_id: str, session_id: str, asset_type: str,
                         error=(out.get("image") or {}).get("error"))
             with _LOCK:
                 session["image"] = out.get("image") or {}
+                _persist_sessions()
         else:
             out = ad_graph.gen_video_node(state)
             task.update(status="succeeded", url=(out.get("video") or {}).get("url"),
                         error=(out.get("video") or {}).get("error"))
             with _LOCK:
                 session["video"] = out.get("video") or {}
+                _persist_sessions()
         if task.get("error"):
             task["status"] = "failed"
     except Exception as exc:  # noqa: BLE001
@@ -300,6 +313,7 @@ async def import_history_api(payload: dict | None = None):
             "status": "copy_ready",
             "from_history": True,
         })
+        _persist_sessions()
         snapshot = dict(session)
     return ok(snapshot)
 
@@ -356,6 +370,7 @@ async def save_to_delivery_api(payload: dict | None = None):
     with _LOCK:
         session["record_id"] = record["id"]
         session["status"] = "saved"
+        _persist_sessions()
 
     return ok({"record": record, "ad_ids": ad_ids,
                "message": "已进入广告流水线，待审查与审批通过后可在「广告投放」投放"})
@@ -383,6 +398,7 @@ async def pause_generation_api(payload: dict | None = None):
     with _LOCK:
         session["record_id"] = record["id"]
         session["status"] = "paused"
+        _persist_sessions()
     return ok(record)
 
 
@@ -397,4 +413,5 @@ async def discard_generation_api(payload: dict | None = None):
         removed = history_store.delete_record(session["record_id"])
     with _LOCK:
         _SESSIONS.pop(session_id, None)
+        _persist_sessions()
     return ok({"session_id": session_id, "record_deleted": removed})
