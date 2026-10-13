@@ -143,6 +143,175 @@ export function getDeliveryConfig() {
   return request.get('/delivery/config')
 }
 
+/** 某平台详细介绍与投放概况 */
+export function getPlatformDetail(key) {
+  return request.get(`/delivery/platforms/${key}`)
+}
+
+/** 某平台可选广告：{ available: 未投放, history: 投放历史 } */
+export function getPlatformAds(key) {
+  return request.get(`/delivery/platforms/${key}/ads`)
+}
+
+/** 某平台的历史投放批次 */
+export function getPlatformDeliveries(key) {
+  return request.get(`/delivery/platforms/${key}/deliveries`)
+}
+
+// ---------- 商品目录（广告生成页：选择 / 自定义商品） ----------
+
+/** 商品列表（内置清单 + 自定义商品） */
+export function listProducts() {
+  return request.get('/products')
+}
+
+/** 新增自定义商品：{ name, category?, sell_points?, price? } */
+export function createProduct(payload) {
+  return request.post('/products', payload)
+}
+
+// ---------- 生成历史记录（正常 / 半成品） ----------
+
+/** 历史记录列表（含 wip 半成品标记） */
+export function listHistory() {
+  return request.get('/history')
+}
+
+/** 保存一次生成为正常记录 */
+export function saveHistory(payload) {
+  return request.post('/history', payload)
+}
+
+/** 保存为半成品记录（红色标签） */
+export function pauseHistory(payload) {
+  return request.post('/history/pause', payload)
+}
+
+/** 删除一条历史记录 */
+export function deleteHistory(recordId) {
+  return request.delete(`/history/${recordId}`)
+}
+
+// ---------- 广告生成（LangGraph 主图：文案 → 审查 → 图文 / 视频） ----------
+
+/**
+ * 生成 / 重新生成文案（自动送文案审查）
+ * payload: { session_id?, product, keyword?, platform?, regenerate? }
+ */
+export function adgenCopy(payload) {
+  return request.post('/adgen/copy', payload, { timeout: 120000 })
+}
+
+/** 文案命中违禁词后的人工处置：decision = approve | reject */
+export function adgenReview(sessionId, payload) {
+  return request.post(`/adgen/review/${sessionId}`, payload)
+}
+
+/** 基于已通过审查的文案生成图文 / 视频（multipart：session_id、type、keyword?、image?） */
+export function adgenAsset(formData) {
+  return request.post('/adgen/asset', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000,
+  })
+}
+
+/** 查询图文 / 视频生成状态 */
+export function adgenAssetStatus(taskId) {
+  return request.get(`/adgen/asset/status/${taskId}`)
+}
+
+/** 生成会话快照（供横向步骤卡回填） */
+export function adgenSession(sessionId) {
+  return request.get(`/adgen/session/${sessionId}`)
+}
+
+/** 载入历史记录为生成会话（作为模板继续生成图文 / 视频） */
+export function adgenImport(recordId) {
+  return request.post('/adgen/import', { record_id: recordId })
+}
+
+/** 存到投放界面（进入广告流水线 + 写入历史记录） */
+export function adgenSave(payload) {
+  return request.post('/adgen/save', payload)
+}
+
+/** 暂停生成并退出（写入半成品历史记录） */
+export function adgenPause(payload) {
+  return request.post('/adgen/pause', payload)
+}
+
+/** 删除此次生成（未保存则仅清会话） */
+export function adgenDiscard(payload) {
+  return request.post('/adgen/discard', payload)
+}
+
+// ---------- 批量生成（Dify 风格分叉树） ----------
+
+/**
+ * 批量生成文案（count 1~8）；首次调用传 product 创建会话，之后传 batch_id 追加
+ * payload: { batch_id?, product?, keyword?, platform?, count }
+ */
+export function batchCopy(payload) {
+  return request.post('/batch/copy', payload, { timeout: 120000 })
+}
+
+/** 为某条文案批量生成 图文 / 视频（multipart：batch_id、copy_id、type、count、keyword?、image?；count 1~5） */
+export function batchAsset(formData) {
+  return request.post('/batch/asset', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000,
+  })
+}
+
+/** 重新生成分叉树中的单个节点（文案 / 图文 / 视频） */
+export function batchRegenerate(payload) {
+  return request.post('/batch/regenerate', payload, { timeout: 120000 })
+}
+
+/** 批量生成会话快照（分叉树节点） */
+export function batchSession(batchId) {
+  return request.get(`/batch/session/${batchId}`)
+}
+
+/** 保存到投放界面 + 历史记录（可传 copy_ids 指定文案节点） */
+export function batchSave(payload) {
+  return request.post('/batch/save', payload)
+}
+
+/** 丢弃整棵批量生成分叉树 */
+export function batchDiscard(payload) {
+  return request.post('/batch/discard', payload)
+}
+
+// ---------- 广告投放：删除广告物料 ----------
+
+/** 删除某平台下的一条广告（未投放 / 历史投放均可） */
+export function deletePlatformAd(platformKey, adId) {
+  return request.delete(`/delivery/platforms/${platformKey}/ads/${adId}`)
+}
+
+// ---------- 充值中心（独立图文 API 账户，Mock 记账） ----------
+
+/** 账户概览：余额 / 点数 / 计费口径 */
+export function getBillingAccount() {
+  return request.get('/billing/account')
+}
+
+/** 充值套餐列表 */
+export function listBillingPackages() {
+  return request.get('/billing/packages')
+}
+
+/** 充值 / 消费流水 */
+export function listBillingInvoices() {
+  return request.get('/billing/invoices')
+}
+
+/** 充值（Mock）：{ package_id } → 新余额与到账点数 */
+export function rechargeAccount(payload) {
+  return request.post('/billing/recharge', payload)
+}
+
 // ---------- 用户鉴权（真实用户表） ----------
 
 /** 注册：{ username, password, display_name? } → { token, user } */

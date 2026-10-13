@@ -17,13 +17,65 @@ body,
   padding: 0;
 }
 
+html {
+  background: #edf1f8;
+}
+
 body {
   font-family:
     -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
     'Hiragino Sans GB', 'Microsoft YaHei', Arial, sans-serif;
-  background: var(--dashboard-bg);
+  /* 背景交由下方全局动态图案层承载（半透明），故此处置为透明 */
+  background: transparent;
   color: #303133;
   font-size: 14px;
+}
+
+/* ===== 全局动态背景（半透明动态图案，位于所有内容之后） ===== */
+body::before,
+body::after {
+  content: '';
+  position: fixed;
+  inset: -12%;
+  z-index: -1;
+  pointer-events: none;
+}
+/* 层一：漂浮色斑渐变（半透明） */
+body::before {
+  background:
+    radial-gradient(circle at 12% 18%, rgba(64, 158, 255, 0.22), transparent 42%),
+    radial-gradient(circle at 88% 12%, rgba(124, 109, 255, 0.2), transparent 40%),
+    radial-gradient(circle at 72% 88%, rgba(255, 122, 69, 0.16), transparent 44%),
+    radial-gradient(circle at 22% 82%, rgba(35, 190, 160, 0.16), transparent 42%),
+    linear-gradient(135deg, #f4f8ff 0%, #eaeffb 45%, #f6f8fc 100%);
+  animation: bg-float 26s ease-in-out infinite alternate;
+}
+/* 层二：缓慢游走的网格图案（半透明，向中心淡出） */
+body::after {
+  background-image:
+    linear-gradient(rgba(29, 43, 79, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(29, 43, 79, 0.07) 1px, transparent 1px);
+  background-size: 46px 46px;
+  opacity: 0.7;
+  -webkit-mask-image: radial-gradient(circle at 50% 38%, #000 0%, transparent 78%);
+  mask-image: radial-gradient(circle at 50% 38%, #000 0%, transparent 78%);
+  animation: bg-grid 40s linear infinite;
+}
+@keyframes bg-float {
+  0% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(-2%, 1.5%, 0) scale(1.06); }
+  100% { transform: translate3d(2%, -1.5%, 0) scale(1.04); }
+}
+@keyframes bg-grid {
+  from { background-position: 0 0, 0 0; }
+  to { background-position: 46px 46px, 46px 46px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::before,
+  body::after {
+    animation: none;
+  }
 }
 
 ::-webkit-scrollbar {

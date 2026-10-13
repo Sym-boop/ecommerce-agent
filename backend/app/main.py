@@ -47,6 +47,11 @@ from app.api.ads_router import router as ads_router
 from app.api.delivery_router import router as delivery_router
 from app.api.review_router import router as review_router
 from app.api.auth_router import router as auth_router
+from app.api.product_router import router as product_router
+from app.api.history_router import router as history_router
+from app.api.adgen_router import router as adgen_router
+from app.api.batch_router import router as batch_router
+from app.api.billing_router import router as billing_router
 from fastapi.staticfiles import StaticFiles
 
 
@@ -84,7 +89,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="电商多智能体运营系统",
-    description="多 Agent 电商运营自动化系统：文案 / 定价 / 广告风控 / 审批",
+    description="多 Agent 电商运营自动化系统：广告生成（文案/图文/视频）/ 审查审批 / 多平台投放",
     version=APP_VERSION,
     lifespan=lifespan,
 )
@@ -113,6 +118,11 @@ app.include_router(ads_router)
 app.include_router(delivery_router)
 app.include_router(review_router)
 app.include_router(auth_router)
+app.include_router(product_router)
+app.include_router(history_router)
+app.include_router(adgen_router)
+app.include_router(batch_router)
+app.include_router(billing_router)
 # ---------------------------------------------------------------------------
 # 统一响应体
 # ---------------------------------------------------------------------------

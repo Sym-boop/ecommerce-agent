@@ -147,7 +147,7 @@ async function handleSubmit() {
       await authStore.register({ ...payload, display_name: form.display_name.trim() })
       ElMessage.success('注册成功，已自动登录')
     }
-    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/copy'
+    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/'
     router.replace(redirect)
   } catch (e) {
     const msg = e?.response?.data?.msg || e?.message || '操作失败，请稍后重试'

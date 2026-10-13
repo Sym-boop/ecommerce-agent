@@ -29,3 +29,6 @@ pandas>=2.2
 # 可选：本地 Embedding（走 HuggingFace bge-m3 时）
 langchain-huggingface>=0.1
 sentence-transformers>=2.7
+
+# Agent 编排（广告生成主图：StateGraph + 断点暂停 / 人工审查恢复）
+langgraph>=1.0,<2.0

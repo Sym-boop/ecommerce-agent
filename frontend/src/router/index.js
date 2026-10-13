@@ -1,10 +1,12 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
-// 路由表：登录 / 生成器（文案/图文/视频）/ 任务拓扑看板 / 审查中心
+// 路由表：登录 / 首页 / 广告生成 / 广告投放 / 历史广告发售 / 审查中心（任务看板仅保留路由，不在菜单展示）
 const routes = [
   {
     path: '/',
-    redirect: '/copy',
+    name: 'home',
+    component: () => import('@/views/Home.vue'),
+    meta: { title: '首页' },
   },
   {
     path: '/login',
@@ -13,22 +15,16 @@ const routes = [
     meta: { title: '登录', public: true },
   },
   {
-    path: '/copy',
-    name: 'copy-generator',
-    component: () => import('@/views/CopyGenerator.vue'),
-    meta: { title: '文案生成' },
+    path: '/adgen',
+    name: 'ad-generator',
+    component: () => import('@/views/AdGenerator.vue'),
+    meta: { title: '广告生成' },
   },
   {
-    path: '/image',
-    name: 'image-generator',
-    component: () => import('@/views/ImageGenerator.vue'),
-    meta: { title: '图文生成' },
-  },
-  {
-    path: '/video',
-    name: 'video-generator',
-    component: () => import('@/views/VideoGenerator.vue'),
-    meta: { title: '视频生成' },
+    path: '/batch',
+    name: 'batch-generator',
+    component: () => import('@/views/BatchGenerator.vue'),
+    meta: { title: '批量生成' },
   },
   {
     path: '/history',
@@ -53,6 +49,18 @@ const routes = [
     name: 'approvals',
     component: () => import('@/views/Approvals.vue'),
     meta: { title: '审查中心' },
+  },
+  {
+    path: '/recharge',
+    name: 'recharge',
+    component: () => import('@/views/RechargeCenter.vue'),
+    meta: { title: '充值中心' },
+  },
+  {
+    path: '/help',
+    name: 'help',
+    component: () => import('@/views/HelpCenter.vue'),
+    meta: { title: '帮助中心' },
   },
 ]
 

@@ -29,17 +29,17 @@
         text-color="#c8d3e8"
         active-text-color="#ffffff"
       >
-        <el-menu-item index="/copy">
-          <el-icon><EditPen /></el-icon>
-          <span>文案生成</span>
+        <el-menu-item index="/">
+          <el-icon><HomeFilled /></el-icon>
+          <span>首页</span>
         </el-menu-item>
-        <el-menu-item index="/image">
-          <el-icon><PictureFilled /></el-icon>
-          <span>图文生成</span>
+        <el-menu-item index="/adgen">
+          <el-icon><MagicStick /></el-icon>
+          <span>广告生成</span>
         </el-menu-item>
-        <el-menu-item index="/video">
-          <el-icon><VideoCameraFilled /></el-icon>
-          <span>视频生成</span>
+        <el-menu-item index="/batch">
+          <el-icon><Grid /></el-icon>
+          <span>批量生成</span>
         </el-menu-item>
         <el-menu-item index="/delivery">
           <el-icon><Promotion /></el-icon>
@@ -59,6 +59,14 @@
             <el-icon><Bell /></el-icon>
             <span>审查中心</span>
           </el-badge>
+        </el-menu-item>
+        <el-menu-item index="/recharge">
+          <el-icon><Wallet /></el-icon>
+          <span>充值中心</span>
+        </el-menu-item>
+        <el-menu-item index="/help">
+          <el-icon><QuestionFilled /></el-icon>
+          <span>帮助中心</span>
         </el-menu-item>
       </el-menu>
 
@@ -88,9 +96,9 @@
     </el-header>
 
     <el-main class="app-main">
-      <!-- 生成页缓存：切换菜单时不销毁组件，保留已生成的文案/图文/视频结果与任务号 -->
+      <!-- 生成页缓存：切换菜单时不销毁组件，保留已选商品/关键词与已生成的文案、图文、视频结果 -->
       <router-view v-slot="{ Component }">
-        <keep-alive :include="['CopyGenerator', 'ImageGenerator', 'VideoGenerator']">
+        <keep-alive :include="['AdGenerator', 'BatchGenerator']">
           <component :is="Component" />
         </keep-alive>
       </router-view>
@@ -145,12 +153,9 @@ function setupSocket() {
     approvalStore.upsertPending(approval)
     ElNotification({
       title: `风控拦截：${APPROVAL_TYPE_META[approval.type]?.label || '新审批'}待处理`,
-      message:
-        approval.type === 'copy'
-          ? `《${approval.title || approval.product_name}》需人工复核发布`
-          : approval.type === 'pricing'
-            ? `${approval.product_name} 建议${approval.action} ${Math.abs(approval.change_percent).toFixed(2)}%`
-            : `${approval.campaign_name} 超预算阈值已阻断`,
+      message: approval.type === 'copy'
+        ? `《${approval.title || approval.product_name}》需人工复核发布`
+        : `${approval.campaign_name || '广告投放计划'} 超预算阈值已阻断`,
       type: 'warning',
       duration: 6000,
       onClick: () => router.push('/approvals'),
@@ -233,9 +238,15 @@ watch(
 .app-menu {
   border-bottom: none !important;
   flex: 1;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.app-menu::-webkit-scrollbar {
+  height: 0;
 }
 .app-menu .el-menu-item {
   border-bottom: 3px solid transparent !important;
+  padding: 0 12px !important;
 }
 .app-menu .el-menu-item.is-active {
   border-bottom-color: #79bbff !important;

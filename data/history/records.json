@@ -1,0 +1,118 @@
+[
+  {
+    "id": "REC-20261013-72075c",
+    "created_at": "2026-10-13T09:14:25",
+    "product": {
+      "name": "夏季纯棉T恤",
+      "category": "T恤",
+      "sell_points": [
+        "T恤"
+      ]
+    },
+    "keyword": "通勤",
+    "platform": "xiaohongshu",
+    "copy": {
+      "title": "通勤党狂喜！3件纯棉T恤轮着穿，夏天出门不纠结",
+      "content": "最近连着入了3件夏季纯棉T恤，早上赶地铁再也不用站在衣柜前发呆啦🙌。摸起来软乎乎的，贴身穿不扎，挤早高峰也能保持清爽感。\n\n通勤我一般搭西装裤或半裙，版型利落不邋遢，塞进腰里也不鼓包👌。纯棉材质透气，办公室坐一天后背也没闷得难受。\n\n洗了几次领口没变形，颜色也没怎么掉，懒人丢洗衣机就行🧺。一件穿去上班，一件周末遛弯，一件备着出差，3件轮换刚刚好。\n\n如果你也在找不费脑的通勤T恤，这种基础款真的可以试试～我已经把链接甩给同组姐妹了😆。",
+      "tags": [
+        "#夏季T恤",
+        "#纯棉T恤",
+        "#通勤穿搭",
+        "#打工人穿搭",
+        "#基础款T恤"
+      ],
+      "platform": "xiaohongshu"
+    },
+    "image_url": "/media/images/becb8523.png",
+    "video_url": null,
+    "stage": "wip"
+  },
+  {
+    "id": "REC-20261013-3b08af",
+    "created_at": "2026-10-13T08:56:08",
+    "product": {
+      "name": "测试商品",
+      "category": "水杯"
+    },
+    "keyword": "保温",
+    "platform": "xiaohongshu",
+    "copy": {
+      "title": "测试爆款标题",
+      "content": "测试爆款正文内容",
+      "tags": [
+        "#测试"
+      ]
+    },
+    "image_url": "/media/images/fake.png",
+    "video_url": null,
+    "stage": "normal"
+  },
+  {
+    "id": "REC-20261013-d3f152",
+    "created_at": "2026-10-13T08:55:39",
+    "product": {
+      "name": "测试商品",
+      "category": "水杯"
+    },
+    "keyword": "保温",
+    "platform": "xiaohongshu",
+    "copy": {
+      "title": "测试爆款标题",
+      "content": "测试爆款正文内容",
+      "tags": [
+        "#测试"
+      ]
+    },
+    "image_url": "/media/images/fake.png",
+    "video_url": null,
+    "stage": "normal"
+  },
+  {
+    "id": "REC-20261013-d065ae",
+    "created_at": "2026-10-13T08:55:19",
+    "product": {
+      "name": "测试商品",
+      "category": "水杯"
+    },
+    "keyword": "保温",
+    "platform": "xiaohongshu",
+    "copy": {
+      "title": "测试爆款标题",
+      "content": "测试爆款正文内容",
+      "tags": [
+        "#测试"
+      ]
+    },
+    "image_url": "/media/images/fake.png",
+    "video_url": null,
+    "stage": "normal"
+  },
+  {
+    "id": "REC-20261012-f5c3be",
+    "created_at": "2026-10-12T22:51:01",
+    "product": {
+      "name": "夏季纯棉T恤",
+      "category": "T恤",
+      "sell_points": [
+        "T恤"
+      ]
+    },
+    "keyword": "通勤",
+    "platform": "xiaohongshu",
+    "copy": {
+      "title": "打工人早八救星！3件纯棉T恤搞定一周通勤👕",
+      "content": "这几天天气一热，我就只想抓件T恤出门，这件夏季纯棉T恤真的成了我的通勤搭子☀️。早上随手套上，搭西装裤或半裙都不违和，省下好多纠结时间。\n面料摸起来软软的，贴身穿不闷，挤地铁到公司也没有那种黏糊糊的烦躁感🍃。微宽松版型对我这种久坐党挺友好，抬手敲键盘也不勒肩膀。\n我入了白色和浅灰，洗过几次后领口没怎么变形，晾干直接挂进衣柜就行🧺。搭配帆布鞋是休闲感，换双乐福鞋又能撑住开会场合，一件多穿很省心。\n如果说夏天衣柜里要留几件随手能穿的T恤，我会给这件留位置👌。建议通勤姐妹选合身但不紧身的码，舒服和利落都能兼顾。",
+      "tags": [
+        "#夏季T恤",
+        "#通勤穿搭",
+        "#纯棉T恤",
+        "#打工人穿搭",
+        "#日常好物分享"
+      ],
+      "platform": "xiaohongshu"
+    },
+    "image_url": "/media/images/93c9ae9c.png",
+    "video_url": null,
+    "stage": "normal"
+  }
+]

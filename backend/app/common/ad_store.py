@@ -104,6 +104,14 @@ def update_ad(ad_id: str, **patch) -> dict | None:
         return ad
 
 
+def delete_ad(ad_id: str) -> bool:
+    """删除指定广告物料，返回是否删除成功（供「广告投放」界面清理物料）。"""
+    with _LOCK:
+        before = len(_ADS)
+        _ADS[:] = [a for a in _ADS if a["id"] != ad_id]
+        return len(_ADS) != before
+
+
 def mark_delivered(ad_ids: list[str], platform: str = "", status: str = "delivered") -> int:
     """把指定广告标记为已投放并推进到 delivered 阶段（供投放中心调用）。"""
     ids = set(ad_ids or [])

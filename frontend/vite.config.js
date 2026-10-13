@@ -3,7 +3,7 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
 // 后端 FastAPI 服务地址（单一事实来源）：切换后端端口只需改这一处
-const BACKEND_TARGET = 'http://127.0.0.1:8001'
+const BACKEND_TARGET = 'http://127.0.0.1:8000'
 
 export default defineConfig({
   plugins: [vue()],

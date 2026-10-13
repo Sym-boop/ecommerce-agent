@@ -7,11 +7,10 @@
     任务: {id, goal, status(running|done|failed), budget, created_at, nodes[], edges[]}
     节点: {id, type, name, status(pending|running|success|failed|waiting),
            started_at, finished_at, input, output, error, logs[{ts, level, msg}]}
-    审批: type ∈ copy | pricing | ads；status ∈ pending | approved | rejected
+    审批: type ∈ copy | ads；status ∈ pending | approved | rejected
     事件: node:update / task:update / approval:created / approval:updated
 
 子 Agent 调用策略「真实优先、缺失降级」:
-    - pricing: 调成员E app.agent.pricing.pricing_node（需 ERP MCP / CSV 数据，不可用时节点失败）
     - copywriter: 调成员D app.agent.copywriter.generate_copy（未实现时用模板草稿降级，
       违禁词扫描走 milvus_cli.check_banned_words 真实链路，Milvus 不可用时返回空）
     - ads: 风控网关（SUP-005 熔断）：触发即阻断并生成审批单，待 A 的 ads_manager 接入后替换
@@ -35,14 +34,12 @@ from typing import Any, Awaitable, Callable
 # ---------------------------------------------------------------------------
 
 COPY_KEYWORDS = ["文案", "推广", "小红书", "TikTok", "亚马逊", "种草", "图文", "Listing"]
-PRICE_KEYWORDS = ["调价", "定价", "竞品", "价格", "降价", "涨价", "跟价"]
 ADS_KEYWORDS = ["广告", "投放", "出价", "千川", "预算", "巨量", "Meta", "加投"]
 IMAGE_KEYWORDS = ["图文", "图片", "配图"]
 VIDEO_KEYWORDS = ["视频", "短视频", "动态"]
 
 ADS_BUDGET_THRESHOLD = 50000   # 总预算熔断阈值（元）
 BID_THRESHOLD = 2.0            # 单次出价熔断阈值（元）
-PRICE_CHANGE_THRESHOLD = 10.0  # 调价审批阈值（%）
 
 CURRENT_OPERATOR = "当前登录运营"
 
@@ -126,7 +123,6 @@ def _build_task(payload: dict) -> dict:
     budget = int(budget) if isinstance(budget, (int, float)) and budget else None
     needs = {
         "copy": any(k in goal for k in COPY_KEYWORDS),
-        "pricing": any(k in goal for k in PRICE_KEYWORDS),
         "ads": any(k in goal for k in ADS_KEYWORDS) or (budget or 0) >= ADS_BUDGET_THRESHOLD,
         "image": any(k in goal for k in IMAGE_KEYWORDS),
         "video": any(k in goal for k in VIDEO_KEYWORDS),
@@ -144,9 +140,6 @@ def _build_task(payload: dict) -> dict:
     if needs["copy"]:
         nodes.append(_make_node("n-copy", "copywriter", "爆款文案 Agent"))
         edges.append({"source": "n-sup", "target": "n-copy", "label": "文案任务", "kind": "normal"})
-    if needs["pricing"]:
-        nodes.append(_make_node("n-price", "pricing", "动态定价 Agent"))
-        edges.append({"source": "n-sup", "target": "n-price", "label": "定价任务", "kind": "normal"})
     if needs["ads"]:
         nodes.append(_make_node("n-ads", "ads", "广告风控网关"))
         edges.append({"source": "n-sup", "target": "n-ads", "label": "广告投放", "kind": "normal"})
@@ -156,10 +149,6 @@ def _build_task(payload: dict) -> dict:
     if needs["copy"]:
         edges.append({"source": "n-copy", "target": "n-handoff", "label": "重大发布", "kind": "condition"})
         edges.append({"source": "n-copy", "target": "n-end", "label": "常规通过", "kind": "normal"})
-
-    if needs["pricing"]:
-        edges.append({"source": "n-price", "target": "n-handoff", "label": "超阈值幅度", "kind": "condition"})
-        edges.append({"source": "n-price", "target": "n-end", "label": "阈值内", "kind": "normal"})
 
     if needs["ads"]:
         edges.append({"source": "n-ads", "target": "n-handoff", "label": "预算熔断", "kind": "condition"})
@@ -191,28 +180,6 @@ def _make_copy_approval(task: dict, title: str, content: str, violations: list[d
         "sku": "", "product_name": task["goal"][:30], "platform": "xiaohongshu", "language": "zh-CN",
         "title": title, "content": content, "violations": violations,
         "versions": [{"version": 1, "content": content, "editor": "copywriter-agent", "created_at": _now_iso()}],
-    }
-
-
-def _make_pricing_approval(task: dict, price_result: dict) -> dict:
-    change_pct = float(price_result.get("change_pct") or 0) * 100
-    need_approval = bool(price_result.get("need_approval"))
-    comp_rows = (price_result.get("comparison") or {}).get("competitors") or []
-    competitors = [
-        {"name": c.get("name") or c.get("competitor") or "-", "price": c.get("price"), "shipping": c.get("shipping", 0)}
-        for c in comp_rows if isinstance(c, dict)
-    ][:10]
-    return {
-        "id": _next_id("APV-PRICE"), "type": "pricing", "status": "pending",
-        "task_id": task["id"], "priority": "high",
-        "created_at": _now_iso(), "handled_at": None, "handler": None, "comment": "",
-        "sku": price_result.get("sku", ""), "product_name": price_result.get("product_name", ""),
-        "current_price": price_result.get("our_price"), "suggested_price": price_result.get("suggested_price"),
-        "change_percent": round(change_pct, 2), "action": price_result.get("action", ""),
-        "confidence": price_result.get("confidence"),
-        "threshold_percent": PRICE_CHANGE_THRESHOLD, "threshold_exceeded": need_approval,
-        "competitors": competitors, "reason": price_result.get("reason", ""),
-        "expected_revenue": "", "risk_level": "medium", "risk_note": "",
     }
 
 
@@ -279,15 +246,6 @@ def _try_generate_copy(product: dict, platform: str) -> dict | None:
         return None
 
 
-def _try_pricing_node(goal: str) -> dict | None:
-    """调用成员E 的 pricing_node；未实现或失败返回 None。"""
-    try:
-        from app.agent.pricing import pricing_node
-        return pricing_node({"goal": goal})
-    except Exception as exc:  # noqa: BLE001
-        return {"status": "failed", "error": str(exc)}
-
-
 async def _run_copy_node(task: dict) -> list[str]:
     node = _node(task, "n-copy")
     _patch_node(task, "n-copy", status="running", started_at=_now_iso(),
@@ -314,40 +272,6 @@ async def _run_copy_node(task: dict) -> list[str]:
     await _emit("approval:created", approval)
     _patch_node(task, "n-copy", status="success", finished_at=_now_iso(),
                 output={"platforms": 3, "violations_found": len(violations), "approval_id": approval["id"]})
-    return [approval["id"]]
-
-
-async def _run_pricing_node(task: dict) -> list[str]:
-    node = _node(task, "n-price")
-    _patch_node(task, "n-price", status="running", started_at=_now_iso(), input={"goal": task["goal"]})
-    _log(node, "info", "通过 ERP MCP 适配器拉取竞品价格并分析波动")
-
-    out = await asyncio.to_thread(_try_pricing_node, task["goal"])
-    if not out or out.get("status") != "done":
-        error = (out or {}).get("error") or "pricing Agent 未实现"
-        _log(node, "error", f"定价 Agent 执行失败：{error}")
-        _patch_node(task, "n-price", status="failed", finished_at=_now_iso(), error=error)
-        return []
-
-    price_result = out["price_result"]
-    _log(node, "success",
-         f"调价建议：{price_result.get('action')}，置信度 {price_result.get('confidence')}")
-    if not price_result.get("need_approval"):
-        _patch_node(task, "n-price", status="success", finished_at=_now_iso(),
-                    output={"action": price_result.get("action"),
-                            "confidence": price_result.get("confidence"),
-                            "change_percent": round(float(price_result.get("change_pct") or 0) * 100, 2)})
-        return []
-
-    _log(node, "warn", f"调价幅度超过 {PRICE_CHANGE_THRESHOLD}% 审批阈值，触发熔断，推送人工审批")
-    approval = _make_pricing_approval(task, price_result)
-    with _lock:
-        APPROVALS[approval["id"]] = approval
-    await _emit("approval:created", approval)
-    _patch_node(task, "n-price", status="success", finished_at=_now_iso(),
-                output={"action": price_result.get("action"),
-                        "confidence": price_result.get("confidence"),
-                        "approval_id": approval["id"]})
     return [approval["id"]]
 
 
@@ -468,14 +392,6 @@ async def run_lifecycle(task_id: str) -> None:
                                 "content": copy_res.get("content", "")[:200] + "..."})
             _log(_node(task, "n-copy"), "success", "Supervisor 已返回文案结果")
 
-    if "n-price" in [n["id"] for n in task["nodes"]]:
-        price_res = results.get("pricing") or result.get("price_result")
-        if price_res:
-            _patch_node(task, "n-price", status="success", finished_at=_now_iso(),
-                        output={"action": price_res.get("action"),
-                                "confidence": price_res.get("confidence")})
-            _log(_node(task, "n-price"), "success", f"调价建议：{price_res.get('action')}")
-
     if "n-image" in [n["id"] for n in task["nodes"]]:
         img_res = results.get("image")
         if img_res:
@@ -497,14 +413,6 @@ async def run_lifecycle(task_id: str) -> None:
             approval = _make_copy_approval(
                 task, copy_res.get("title", ""), copy_res.get("content", ""), violations,
             )
-            with _lock:
-                APPROVALS[approval["id"]] = approval
-                register_waiter(approval["id"])
-            await _emit("approval:created", approval)
-            approval_ids.append(approval["id"])
-
-        if results.get("pricing") and results["pricing"].get("need_approval"):
-            approval = _make_pricing_approval(task, results["pricing"])
             with _lock:
                 APPROVALS[approval["id"]] = approval
                 register_waiter(approval["id"])
@@ -543,7 +451,7 @@ def create_task(payload: dict) -> dict:
     task["inputs"] = {
         k: v for k, v in payload.items()
         if k in ("sku", "product_name", "product_sell_points",
-                 "product_category", "platform", "our_price", "language")
+                 "product_category", "platform", "language")
     }
     with _lock:
         TASKS[task["id"]] = task

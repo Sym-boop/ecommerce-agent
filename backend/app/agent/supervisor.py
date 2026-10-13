@@ -15,7 +15,6 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from typing import TypedDict, Optional, Any
-from backend.app.agent.pricing import pricing_node
 from backend.app.agent.copywriter import copywriter_node
 
 logger = logging.getLogger(__name__)
@@ -37,7 +36,6 @@ class SupervisorState(TypedDict, total=False):
     product_info: dict
     platform: str
     sku: str
-    our_price: float
 
     # ---- Copywriter 需要的字段 ----
     product_name: str
@@ -51,7 +49,6 @@ class SupervisorState(TypedDict, total=False):
     # ---- 子图输出 ----
     results: dict
     copy_result: Any
-    price_result: dict
 
     # ---- 审批与熔断 ----
     approval_required: bool
@@ -76,12 +73,6 @@ def copywriter_task(state: SupervisorState) -> dict:
     return copywriter_node(state)
 
 
-def pricing_task(state: SupervisorState) -> dict:
-    """调用真实 Pricing Agent"""
-    return pricing_node(state)
-
-
-
 # ============================================
 # 三、任务拆解 + 主控调度
 # ============================================
@@ -91,8 +82,6 @@ def decompose_goal(goal: str) -> list:
     sub_tasks = []
     if any(kw in goal for kw in ["文案", "推广", "小红书", "TikTok", "亚马逊"]):
         sub_tasks.append({"type": "copywriter", "payload": {"goal": goal}})
-    if any(kw in goal for kw in ["调价", "定价", "竞品", "价格"]):
-        sub_tasks.append({"type": "pricing", "payload": {"goal": goal}})
     if any(kw in goal for kw in ADS_KEYWORDS):
         sub_tasks.append({"type": "ads", "payload": {"goal": goal}})
 
@@ -147,8 +136,6 @@ def supervisor_node(state: SupervisorState) -> dict:
     for task in sub_tasks:
         if task["type"] == "copywriter":
             sub = copywriter_task(state)
-        elif task["type"] == "pricing":
-            sub = pricing_task(state)
         elif task["type"] == "image":
             sub = image_generator_node(state)
         elif task["type"] == "video":
@@ -166,8 +153,6 @@ def supervisor_node(state: SupervisorState) -> dict:
 
         if sub.get("copy_result") is not None:
             result["results"]["copywriter"] = sub["copy_result"]
-        if sub.get("price_result") is not None:
-            result["results"]["pricing"] = sub["price_result"]
         if sub.get("image_result") is not None:
             result["results"]["image"] = sub["image_result"]
         if sub.get("video_result") is not None:
@@ -180,7 +165,6 @@ def supervisor_node(state: SupervisorState) -> dict:
         result["metadata"] = result.get("metadata", {})
         result["metadata"]["pending_results"] = {
             "copy_result": result.get("copy_result"),
-            "price_result": result.get("price_result"),
         }
         logger.info("任务 %s 触发审批，等待人工处理", state["task_id"])
     else:

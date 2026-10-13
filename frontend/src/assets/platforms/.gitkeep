@@ -1,0 +1,3 @@
+# 平台 logo 替换目录
+# 可将各平台官方 logo 放入本目录（如 douyin.svg / xiaohongshu.svg / alimama.svg / pinduoduo.svg），
+# 并替换 frontend/src/components/PlatformLogo.vue 中的自绘 SVG 为真实 logo 引用。

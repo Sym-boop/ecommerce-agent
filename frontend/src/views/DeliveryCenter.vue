@@ -1,182 +1,303 @@
 <template>
-  <div class="gen-page">
-    <!-- ===== 页头 ===== -->
-    <div class="gen-hero">
-      <span class="gen-hero-icon">
-        <el-icon :size="24"><Promotion /></el-icon>
-      </span>
-      <div>
-        <h1 class="gen-hero-title">广告投放</h1>
-        <p class="gen-hero-desc">
-          选择目标平台（巨量千川 / 小红书等），勾选已审批的广告物料，一键批量投放。投放为 Mock 模拟，不产生真实扣费。
-        </p>
+  <div class="delivery" :style="themeStyle">
+    <!-- ================= 平台选择（一级） ================= -->
+    <template v-if="!current">
+      <div class="gen-hero">
+        <span class="gen-hero-icon">
+          <el-icon :size="24"><Promotion /></el-icon>
+        </span>
+        <div>
+          <h1 class="gen-hero-title">广告投放</h1>
+          <p class="gen-hero-desc">
+            选择目标平台，进入平台投放台：投放广告、查看投放历史、了解平台介绍。投放为 Mock 模拟，不产生真实扣费。
+          </p>
+        </div>
       </div>
-    </div>
 
-    <el-row :gutter="18">
-      <!-- ===== 投递配置 ===== -->
-      <el-col :xs="24" :lg="14">
-        <el-card class="gen-card" shadow="never">
-          <template #header>投递配置</template>
-
-          <el-form label-position="top">
-            <el-form-item label="目标平台" required>
-              <el-radio-group v-model="platform">
-                <el-radio-button v-for="p in platforms" :key="p.value" :value="p.value">
-                  {{ p.label }}
-                </el-radio-button>
-              </el-radio-group>
-            </el-form-item>
-
-            <el-form-item label="投放预算（元）" required>
-              <el-input-number
-                v-model="budget"
-                :min="0"
-                :step="1000"
-                :controls="false"
-                style="width: 200px"
-              />
-              <span v-if="budgetConfig" class="budget-hint">
-                审查区间 ¥{{ budgetConfig.min_budget.toLocaleString() }} ~
-                ¥{{ budgetConfig.max_budget.toLocaleString() }}，超出将被拦截
-              </span>
-            </el-form-item>
-          </el-form>
-
-          <div class="ad-picker-head">
-            <span class="ad-picker-title">已审批广告物料（{{ availableAds.length }}）</span>
-            <div class="ad-picker-actions">
-              <el-button size="small" text @click="selectAll">全选</el-button>
-              <el-button size="small" text @click="clearAll">清空</el-button>
+      <div class="platform-grid">
+        <div
+          v-for="p in platforms"
+          :key="p.value"
+          class="platform-card"
+          :style="{ '--c': p.theme_color }"
+          @click="enterPlatform(p)"
+        >
+          <div class="platform-card-top">
+            <PlatformLogo :logo-key="p.logo_key" :color="p.theme_color" :label="p.label" :size="54" />
+            <div class="platform-card-name">
+              <div class="platform-title">{{ p.label }}</div>
+              <div class="platform-belong">{{ p.belong }}</div>
             </div>
+            <el-tag size="small" effect="plain" :style="tagStyle(p)">{{ p.category }}</el-tag>
           </div>
+          <p class="platform-intro">{{ p.intro }}</p>
+          <div class="platform-features">
+            <span v-for="f in p.features" :key="f" class="feature-chip">{{ f }}</span>
+          </div>
+          <div class="platform-card-foot">
+            <span class="enter-text">进入投放台</span>
+            <el-icon><ArrowRight /></el-icon>
+          </div>
+        </div>
+      </div>
+    </template>
 
-          <el-empty
-            v-if="availableAds.length === 0"
-            description="暂无待投放的广告物料，请先在「审查中心」完成审查与审批"
-            :image-size="80"
-          />
+    <!-- ================= 平台投放台（二级） ================= -->
+    <template v-else>
+      <div class="platform-hero" :style="heroStyle">
+        <span class="watermark">
+          <PlatformLogo :logo-key="current.logo_key" :color="current.theme_color" :label="current.label" :size="200" />
+        </span>
+        <el-button class="back-btn" text :icon="ArrowLeft" @click="exitPlatform">返回平台列表</el-button>
+        <div class="platform-hero-main">
+          <PlatformLogo :logo-key="current.logo_key" :color="current.theme_color" :label="current.label" :size="60" />
+          <div>
+            <h1 class="platform-hero-title">
+              {{ current.label }}
+              <span class="platform-hero-belong">{{ current.belong }}</span>
+            </h1>
+            <p class="platform-hero-desc">{{ current.intro }}</p>
+          </div>
+        </div>
+      </div>
 
-          <el-checkbox-group v-else v-model="selectedIds" class="ad-picker-list">
-            <label
-              v-for="ad in availableAds"
-              :key="ad.id"
-              class="ad-picker-item"
-              :class="{ 'is-checked': selectedIds.includes(ad.id) }"
-            >
-              <el-checkbox :value="ad.id" class="ad-picker-check">
-                <div class="ad-picker-body">
-                  <div class="ad-picker-row">
-                    <el-tag size="small" :type="typeMeta(ad.type).tagType" effect="plain">
-                      {{ typeMeta(ad.type).label }}
-                    </el-tag>
-                    <span class="ad-picker-id">{{ ad.id }}</span>
-                    <span class="ad-picker-time">{{ formatTime(ad.created_at) }}</span>
-                  </div>
-                  <div class="ad-picker-text">{{ ad.title || ad.prompt || '（无标题）' }}</div>
-                </div>
-              </el-checkbox>
-              <el-image
-                v-if="ad.type === 'image' && ad.result_url"
-                class="ad-picker-thumb"
-                :src="mediaUrl(ad.result_url)"
-                fit="cover"
-                :preview-src-list="[mediaUrl(ad.result_url)]"
-                hide-on-click-modal
-              />
-              <video
-                v-else-if="ad.type === 'video' && ad.result_url"
-                class="ad-picker-thumb"
-                :src="mediaUrl(ad.result_url)"
-                preload="metadata"
-                muted
-              ></video>
-            </label>
-          </el-checkbox-group>
-
-          <el-button
-            type="primary"
-            size="large"
-            :icon="Promotion"
-            :loading="submitting"
-            :disabled="selectedIds.length === 0"
-            class="gen-submit"
-            @click="handleDeliver"
+      <div class="platform-body">
+        <!-- 左侧导航 -->
+        <div class="side-nav">
+          <div
+            v-for="t in tabs"
+            :key="t.key"
+            class="side-item"
+            :class="{ 'is-active': tab === t.key }"
+            :style="tab === t.key ? { '--c': current.theme_color } : {}"
+            @click="switchTab(t.key)"
           >
-            {{ submitting ? '投放中…' : `一键投放（已选 ${selectedIds.length}）` }}
-          </el-button>
-        </el-card>
-      </el-col>
+            <el-icon><component :is="t.icon" /></el-icon>
+            <span>{{ t.label }}</span>
+          </div>
+          <div class="side-stats">
+            <div class="side-stat"><b>{{ counts.available }}</b><span>未投放</span></div>
+            <div class="side-stat"><b>{{ counts.history }}</b><span>已投放</span></div>
+            <div class="side-stat"><b>{{ deliveries.length }}</b><span>投放批次</span></div>
+          </div>
+        </div>
 
-      <!-- ===== 投放结果 ===== -->
-      <el-col :xs="24" :lg="10">
-        <el-card class="gen-card" shadow="never">
-          <template #header>
-            <div class="gen-card-head">
-              <span>投放结果</span>
-              <el-button size="small" :icon="Refresh" @click="fetchDeliveries">刷新</el-button>
-            </div>
+        <!-- 右侧内容 -->
+        <div class="platform-content">
+          <!-- 广告投放 -->
+          <template v-if="tab === 'deliver'">
+            <el-card class="gen-card" shadow="never">
+              <template #header>
+                <div class="gen-card-head">
+                  <span>投放预算</span>
+                  <span v-if="budgetConfig" class="budget-hint">
+                    审查区间 ¥{{ budgetConfig.min_budget.toLocaleString() }} ~
+                    ¥{{ budgetConfig.max_budget.toLocaleString() }}
+                  </span>
+                </div>
+              </template>
+              <el-input-number v-model="budget" :min="0" :step="1000" :controls="false" style="width: 220px" />
+
+              <el-divider content-position="left">待投放广告（未投放）</el-divider>
+              <el-empty
+                v-if="availableAds.length === 0"
+                description="暂无待投放广告，请先在「广告生成」存到投放界面并经审查中心审批通过"
+                :image-size="70"
+              />
+              <div v-else class="ad-list">
+                <label
+                  v-for="ad in availableAds"
+                  :key="ad.id"
+                  class="ad-item"
+                  :class="{ 'is-checked': selected.includes(ad.id) }"
+                  :style="selected.includes(ad.id) ? { '--c': current.theme_color } : {}"
+                >
+                  <el-checkbox :model-value="selected.includes(ad.id)" @change="toggle(ad.id)" />
+                  <div class="ad-main">
+                    <div class="ad-row">
+                      <el-tag size="small" :type="typeMeta(ad.type).tagType" effect="plain">
+                        {{ typeMeta(ad.type).label }}
+                      </el-tag>
+                      <span class="ad-id mono">{{ ad.id }}</span>
+                      <span class="ad-time">{{ formatTime(ad.created_at) }}</span>
+                      <el-button
+                        class="ad-del"
+                        size="small"
+                        text
+                        type="danger"
+                        :icon="Delete"
+                        @click.stop.prevent="handleDelete(ad)"
+                      />
+                    </div>
+                    <div class="ad-text">{{ ad.title || ad.prompt || '（无标题）' }}</div>
+                  </div>
+                  <el-image
+                    v-if="ad.type === 'image' && ad.result_url"
+                    class="ad-thumb"
+                    :src="mediaUrl(ad.result_url)"
+                    fit="cover"
+                    :preview-src-list="[mediaUrl(ad.result_url)]"
+                    hide-on-click-modal
+                  />
+                  <video
+                    v-else-if="ad.type === 'video' && ad.result_url"
+                    class="ad-thumb"
+                    :src="mediaUrl(ad.result_url)"
+                    preload="metadata"
+                    muted
+                  ></video>
+                </label>
+              </div>
+
+              <el-divider content-position="left">投放历史中的广告（可再次投放）</el-divider>
+              <el-empty v-if="historyAds.length === 0" description="该平台暂无投放历史" :image-size="70" />
+              <div v-else class="ad-list">
+                <label
+                  v-for="ad in historyAds"
+                  :key="ad.id"
+                  class="ad-item is-history"
+                  :class="{ 'is-checked': selected.includes(ad.id) }"
+                  :style="selected.includes(ad.id) ? { '--c': current.theme_color } : {}"
+                >
+                  <el-checkbox :model-value="selected.includes(ad.id)" @change="toggle(ad.id)" />
+                  <div class="ad-main">
+                    <div class="ad-row">
+                      <el-tag size="small" type="primary" effect="dark">历史投放</el-tag>
+                      <el-tag size="small" :type="typeMeta(ad.type).tagType" effect="plain">
+                        {{ typeMeta(ad.type).label }}
+                      </el-tag>
+                      <span class="ad-id mono">{{ ad.id }}</span>
+                      <span class="ad-time">{{ formatTime(ad.created_at) }}</span>
+                      <el-button
+                        class="ad-del"
+                        size="small"
+                        text
+                        type="danger"
+                        :icon="Delete"
+                        @click.stop.prevent="handleDelete(ad)"
+                      />
+                    </div>
+                    <div class="ad-text">{{ ad.title || ad.prompt || '（无标题）' }}</div>
+                  </div>
+                  <el-image
+                    v-if="ad.type === 'image' && ad.result_url"
+                    class="ad-thumb"
+                    :src="mediaUrl(ad.result_url)"
+                    fit="cover"
+                    :preview-src-list="[mediaUrl(ad.result_url)]"
+                    hide-on-click-modal
+                  />
+                  <video
+                    v-else-if="ad.type === 'video' && ad.result_url"
+                    class="ad-thumb"
+                    :src="mediaUrl(ad.result_url)"
+                    preload="metadata"
+                    muted
+                  ></video>
+                </label>
+              </div>
+
+              <div class="deliver-actions">
+                <el-button type="primary" size="large" :icon="Promotion" :loading="submitting"
+                  :disabled="selected.length === 0" @click="handleDeliver">
+                  {{ submitting ? '投放中…' : `一键投放到 ${current.label}（已选 ${selected.length}）` }}
+                </el-button>
+                <el-button size="large" text @click="selected = []">清空选择</el-button>
+              </div>
+
+              <div v-if="latest" class="deliver-result" :style="{ '--c': current.theme_color }">
+                <div class="deliver-result-head">
+                  <el-tag size="small" type="success" effect="dark">批次 {{ latest.batch_id }}</el-tag>
+                  <span>{{ latest.platform_label }}</span>
+                  <span class="deliver-time">{{ formatTime(latest.submitted_at) }}</span>
+                </div>
+                <div class="deliver-summary">
+                  共 {{ latest.items.length }} 条 · 成功 <b class="ok">{{ latest.success_count }}</b> ·
+                  失败 <b class="fail">{{ latest.failed_count }}</b> · 预算 ¥{{ Number(latest.budget).toLocaleString() }}
+                </div>
+              </div>
+            </el-card>
           </template>
 
-          <div v-if="latest" class="deliver-result">
-            <div class="deliver-result-head">
-              <el-tag size="small" type="success" effect="dark">批次 {{ latest.batch_id }}</el-tag>
-              <span class="deliver-platform">{{ latest.platform_label }}</span>
-            </div>
-            <div class="deliver-summary">
-              共 {{ latest.items.length }} 条 · 成功
-              <b class="ok">{{ latest.success_count }}</b> · 失败
-              <b class="fail">{{ latest.failed_count }}</b>
-              <span v-if="latest.budget" class="deliver-budget">
-                预算 ¥{{ Number(latest.budget).toLocaleString() }}
-              </span>
-              <span class="deliver-time">{{ formatTime(latest.submitted_at) }}</span>
-            </div>
-            <div class="deliver-items">
-              <div v-for="it in latest.items" :key="it.ad_id" class="deliver-item">
-                <el-tag size="small" :type="it.status === 'success' ? 'success' : 'danger'" effect="plain">
-                  {{ it.status === 'success' ? '投放成功' : '投放失败' }}
-                </el-tag>
-                <span class="deliver-item-id">{{ it.ad_id }}</span>
-                <span class="deliver-item-text">{{ it.title || '（无标题）' }}</span>
-                <span v-if="it.status === 'success'" class="deliver-item-reach">
-                  预估曝光 {{ it.reach.toLocaleString() }}
-                </span>
-                <span v-else class="deliver-item-err">{{ it.error }}</span>
-              </div>
-            </div>
-          </div>
-          <el-empty v-else description="尚未发起投放" :image-size="80" />
+          <!-- 历史投放查看 -->
+          <template v-else-if="tab === 'history'">
+            <el-card class="gen-card" shadow="never">
+              <template #header>
+                <div class="gen-card-head">
+                  <span>历史投放批次（{{ deliveries.length }}）</span>
+                  <el-button size="small" :icon="Refresh" @click="loadPlatform">刷新</el-button>
+                </div>
+              </template>
+              <el-empty v-if="deliveries.length === 0" description="该平台暂无投放批次" :image-size="80" />
+              <el-timeline v-else>
+                <el-timeline-item
+                  v-for="d in deliveries"
+                  :key="d.batch_id"
+                  :timestamp="formatTime(d.submitted_at)"
+                  :color="current.theme_color"
+                  placement="top"
+                >
+                  <div class="batch-row">
+                    <el-tag size="small" effect="plain">{{ d.platform_label }}</el-tag>
+                    <span class="mono">{{ d.batch_id }}</span>
+                    <span class="batch-budget">预算 ¥{{ Number(d.budget).toLocaleString() }}</span>
+                    <span class="batch-count">成功 {{ d.success_count }} / 失败 {{ d.failed_count }}</span>
+                  </div>
+                  <div class="batch-items">
+                    <span v-for="it in d.items" :key="it.ad_id" class="batch-item">
+                      <el-tag size="small" :type="it.status === 'success' ? 'success' : 'danger'" effect="plain">
+                        {{ it.status === 'success' ? '成功' : '失败' }}
+                      </el-tag>
+                      {{ it.title || it.ad_id }}
+                    </span>
+                  </div>
+                </el-timeline-item>
+              </el-timeline>
+            </el-card>
+          </template>
 
-          <el-divider>历史投放批次</el-divider>
-          <div v-if="deliveries.length === 0" class="deliver-empty">暂无历史批次</div>
-          <el-timeline v-else>
-            <el-timeline-item
-              v-for="d in deliveries"
-              :key="d.batch_id"
-              :timestamp="formatTime(d.submitted_at)"
-              type="success"
-              placement="top"
-            >
-              <div class="history-row">
-                <el-tag size="small" effect="plain">{{ d.platform_label }}</el-tag>
-                <span class="mono">{{ d.batch_id }}</span>
-                <span v-if="d.budget" class="history-budget">预算 ¥{{ Number(d.budget).toLocaleString() }}</span>
-                <span class="history-count">成功 {{ d.success_count }} / 失败 {{ d.failed_count }}</span>
+          <!-- 平台详细介绍 -->
+          <template v-else>
+            <el-card class="gen-card" shadow="never">
+              <template #header>平台详细介绍</template>
+              <div class="detail-head">
+                <PlatformLogo :logo-key="current.logo_key" :color="current.theme_color" :label="current.label" :size="52" />
+                <div>
+                  <div class="detail-title">{{ current.label }} · {{ current.belong }}</div>
+                  <div class="detail-sub">{{ current.category }}</div>
+                </div>
               </div>
-            </el-timeline-item>
-          </el-timeline>
-        </el-card>
-      </el-col>
-    </el-row>
+              <p class="detail-text">{{ current.detail }}</p>
+              <div class="detail-features">
+                <span v-for="f in current.features" :key="f" class="feature-chip"
+                  :style="{ color: current.theme_color, borderColor: current.theme_color + '55' }">
+                  {{ f }}
+                </span>
+              </div>
+              <el-divider>投放概况</el-divider>
+              <div class="detail-stats">
+                <div class="detail-stat"><b>{{ current.delivered_ad_count ?? 0 }}</b><span>已投放广告</span></div>
+                <div class="detail-stat"><b>{{ current.delivery_batch_count ?? 0 }}</b><span>投放批次</span></div>
+              </div>
+            </el-card>
+          </template>
+        </div>
+      </div>
+    </template>
   </div>
 </template>
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
-import { Promotion, Refresh } from '@element-plus/icons-vue'
-import { listAds, listDeliveryPlatforms, listDeliveries, submitDelivery, getDeliveryConfig } from '@/api'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import {
+  Promotion, ArrowRight, ArrowLeft, Refresh, Clock, Document, Delete,
+} from '@element-plus/icons-vue'
+import PlatformLogo from '@/components/PlatformLogo.vue'
+import {
+  listDeliveryPlatforms, getPlatformDetail, getPlatformAds, getPlatformDeliveries,
+  submitDelivery, getDeliveryConfig, deletePlatformAd,
+} from '@/api'
 import { formatTime, mediaUrl } from '@/utils/format'
 
 const TYPE_META = {
@@ -186,49 +307,90 @@ const TYPE_META = {
 }
 const typeMeta = (type) => TYPE_META[type] || { label: type, tagType: 'info' }
 
+const tabs = [
+  { key: 'deliver', label: '广告投放', icon: Promotion },
+  { key: 'history', label: '历史投放查看', icon: Clock },
+  { key: 'detail', label: '平台详细介绍', icon: Document },
+]
+
 const platforms = ref([])
-const platform = ref('')
+const current = ref(null)
+const tab = ref('deliver')
+
+const availableAds = ref([])
+const historyAds = ref([])
+const deliveries = ref([])
+const selected = ref([])
 const budget = ref(10000)
 const budgetConfig = ref(null)
-const ads = ref([])
-const selectedIds = ref([])
 const submitting = ref(false)
 const latest = ref(null)
-const deliveries = ref([])
 
-// 仅展示「已审批通过」且尚未投放的广告物料
-const availableAds = computed(() => ads.value.filter((ad) => ad.stage === 'approved'))
+const themeStyle = computed(() =>
+  current.value ? { background: current.value.bg_color, minHeight: '100%' } : {},
+)
+const heroStyle = computed(() => ({
+  background: `linear-gradient(120deg, ${hexA(current.value.theme_color, 0.92)}, ${hexA(current.value.theme_color, 0.7)})`,
+}))
+const tagStyle = (p) => ({ color: p.theme_color, borderColor: p.theme_color + '66' })
+const counts = computed(() => ({
+  available: availableAds.value.length,
+  history: historyAds.value.length,
+}))
 
-function selectAll() {
-  selectedIds.value = availableAds.value.map((ad) => ad.id)
-}
-function clearAll() {
-  selectedIds.value = []
+function hexA(hex, alpha) {
+  const h = (hex || '#409eff').replace('#', '')
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h
+  const r = parseInt(full.slice(0, 2), 16)
+  const g = parseInt(full.slice(2, 4), 16)
+  const b = parseInt(full.slice(4, 6), 16)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
 async function fetchPlatforms() {
   try {
-    platforms.value = await listDeliveryPlatforms()
-    if (!platform.value && platforms.value.length) platform.value = platforms.value[0].value
+    platforms.value = (await listDeliveryPlatforms()) || []
   } catch {
     platforms.value = []
   }
 }
 
-async function fetchAds() {
-  try {
-    ads.value = await listAds()
-  } catch {
-    ads.value = []
-  }
+async function enterPlatform(p) {
+  tab.value = 'deliver'
+  latest.value = null
+  selected.value = []
+  const detail = await getPlatformDetail(p.value).catch(() => null)
+  current.value = detail || p
+  await loadPlatform()
 }
 
-async function fetchDeliveries() {
-  try {
-    deliveries.value = await listDeliveries()
-  } catch {
-    deliveries.value = []
-  }
+function exitPlatform() {
+  current.value = null
+  latest.value = null
+  selected.value = []
+}
+
+async function loadPlatform() {
+  if (!current.value) return
+  const [ads, dels, detail] = await Promise.all([
+    getPlatformAds(current.value.value).catch(() => ({ available: [], history: [] })),
+    getPlatformDeliveries(current.value.value).catch(() => []),
+    getPlatformDetail(current.value.value).catch(() => null),
+  ])
+  availableAds.value = ads?.available || []
+  historyAds.value = ads?.history || []
+  deliveries.value = dels || []
+  if (detail) current.value = detail
+}
+
+function switchTab(key) {
+  tab.value = key
+}
+
+function toggle(id) {
+  const i = selected.value.indexOf(id)
+  if (i >= 0) selected.value.splice(i, 1)
+  else selected.value.push(id)
 }
 
 async function fetchBudgetConfig() {
@@ -246,20 +408,11 @@ async function fetchBudgetConfig() {
 }
 
 async function handleDeliver() {
-  if (!platform.value) {
-    ElMessage.warning('请选择目标平台')
-    return
-  }
-  if (selectedIds.value.length === 0) {
-    ElMessage.warning('请至少勾选一条广告物料')
-    return
-  }
   const amount = Number(budget.value)
   if (!amount || amount <= 0) {
     ElMessage.warning('请填写投放预算')
     return
   }
-  // 前端预审：预算需落在审查区间内
   if (budgetConfig.value) {
     if (amount < budgetConfig.value.min_budget) {
       ElMessage.warning(`投放预算过低（最低 ¥${budgetConfig.value.min_budget.toLocaleString()}）`)
@@ -273,14 +426,14 @@ async function handleDeliver() {
   submitting.value = true
   try {
     const res = await submitDelivery({
-      platform: platform.value,
-      ad_ids: selectedIds.value,
+      platform: current.value.value,
+      ad_ids: selected.value,
       budget: amount,
     })
     latest.value = res
+    selected.value = []
     ElMessage.success(`已投放到「${res.platform_label}」，成功 ${res.success_count} 条`)
-    selectedIds.value = []
-    await Promise.all([fetchAds(), fetchDeliveries()])
+    await loadPlatform()
   } catch (e) {
     ElMessage.error(e?.response?.data?.msg || e?.message || '投放失败，请稍后重试')
   } finally {
@@ -288,201 +441,187 @@ async function handleDeliver() {
   }
 }
 
+async function handleDelete(ad) {
+  try {
+    await ElMessageBox.confirm(`确认删除广告物料 ${ad.id} ？删除后不可恢复。`, '删除广告', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+  try {
+    await deletePlatformAd(current.value.value, ad.id)
+    selected.value = selected.value.filter((id) => id !== ad.id)
+    ElMessage.success('已删除该广告')
+    await loadPlatform()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.msg || e?.message || '删除失败，请稍后重试')
+  }
+}
+
 onMounted(async () => {
-  await Promise.all([fetchPlatforms(), fetchAds(), fetchDeliveries(), fetchBudgetConfig()])
+  await Promise.all([fetchPlatforms(), fetchBudgetConfig()])
 })
 </script>
 
 <style scoped>
-.gen-card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+.delivery { border-radius: 12px; padding: 4px; transition: background 0.3s ease; }
+
+/* ===== 平台卡片（一级） ===== */
+.platform-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
 }
-.gen-submit {
-  width: 100%;
-  margin-top: 14px;
+.platform-card {
+  background: #fff;
+  border: 1px solid var(--card-border);
+  border-top: 4px solid var(--c);
+  border-radius: 14px;
+  padding: 20px 22px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.platform-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 14px 30px color-mix(in srgb, var(--c) 20%, transparent);
+}
+.platform-card-top { display: flex; align-items: center; gap: 14px; }
+.platform-card-name { flex: 1; }
+.platform-title { font-size: 17px; font-weight: 700; color: #1d2b4f; }
+.platform-belong { font-size: 12px; color: #909399; margin-top: 2px; }
+.platform-intro {
+  font-size: 13px; color: #606266; line-height: 1.7; margin: 0;
+  min-height: 66px;
+}
+.platform-features { display: flex; gap: 6px; flex-wrap: wrap; }
+.feature-chip {
+  font-size: 12px; padding: 2px 9px; border-radius: 10px;
+  background: #f4f6fa; color: #5a6b8c; border: 1px solid transparent;
+}
+.platform-card-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  color: var(--c); font-size: 13px; font-weight: 600;
+  border-top: 1px dashed var(--card-border); padding-top: 12px;
 }
 
-.budget-hint {
-  margin-left: 12px;
-  font-size: 12px;
-  color: #909399;
+/* ===== 平台投放台（二级） ===== */
+.platform-hero {
+  position: relative;
+  overflow: hidden;
+  border-radius: 14px;
+  padding: 22px 26px;
+  color: #fff;
+  margin-bottom: 16px;
+  box-shadow: 0 8px 24px rgba(29, 43, 79, 0.18);
 }
-
-.ad-picker-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+.platform-hero .watermark {
+  position: absolute;
+  right: -20px;
+  bottom: -40px;
+  opacity: 0.12;
+  pointer-events: none;
+}
+.back-btn {
+  color: #fff !important;
+  padding-left: 0;
   margin-bottom: 10px;
 }
-.ad-picker-title {
-  font-weight: 600;
-  color: #1d2b4f;
+.platform-hero-main { display: flex; align-items: center; gap: 16px; position: relative; z-index: 1; }
+.platform-hero-title { font-size: 22px; font-weight: 700; margin: 0 0 6px; }
+.platform-hero-belong {
+  font-size: 13px; font-weight: 500; opacity: 0.85;
+  margin-left: 10px; padding: 2px 10px; border-radius: 10px;
+  background: rgba(255, 255, 255, 0.18);
 }
-.ad-picker-actions {
-  display: flex;
-  gap: 4px;
-}
+.platform-hero-desc { margin: 0; font-size: 13px; opacity: 0.92; max-width: 820px; line-height: 1.6; }
 
-.ad-picker-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-height: 42vh;
-  overflow-y: auto;
-  padding-right: 4px;
-  width: 100%;
-}
-.ad-picker-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+.platform-body { display: flex; gap: 16px; align-items: flex-start; }
+.side-nav {
+  flex: 0 0 200px;
+  background: #fff;
   border: 1px solid var(--card-border);
-  border-radius: 10px;
-  padding: 10px 12px;
-  cursor: pointer;
-  transition: border-color 0.2s ease, background 0.2s ease;
-  margin: 0;
+  border-radius: 14px;
+  padding: 10px;
+  box-shadow: 0 4px 14px rgba(29, 43, 79, 0.06);
 }
-.ad-picker-item.is-checked {
-  border-color: #409eff;
-  background: #f2f8ff;
+.side-item {
+  display: flex; align-items: center; gap: 9px; padding: 11px 14px;
+  border-radius: 10px; cursor: pointer; color: #5a6b8c; font-size: 14px;
+  transition: background 0.2s ease, color 0.2s ease;
 }
-.ad-picker-check {
-  flex: 1;
-  height: auto;
-  margin-right: 0;
+.side-item:hover { background: #f4f6fa; }
+.side-item.is-active {
+  background: color-mix(in srgb, var(--c) 12%, #fff);
+  color: var(--c);
+  font-weight: 600;
 }
-.ad-picker-body {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.side-stats {
+  display: flex; gap: 6px; margin-top: 10px;
+  border-top: 1px dashed var(--card-border); padding-top: 12px;
 }
-.ad-picker-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.side-stat { flex: 1; text-align: center; }
+.side-stat b { display: block; font-size: 18px; color: #1d2b4f; }
+.side-stat span { font-size: 11px; color: #909399; }
+
+.platform-content { flex: 1; min-width: 0; }
+.gen-card-head { display: flex; align-items: center; justify-content: space-between; }
+.budget-hint { font-size: 12px; color: #909399; }
+
+.ad-list { display: flex; flex-direction: column; gap: 8px; }
+.ad-item {
+  display: flex; align-items: center; gap: 12px;
+  border: 1px solid var(--card-border); border-radius: 10px; padding: 10px 12px;
+  cursor: pointer; transition: border-color 0.2s ease, background 0.2s ease; margin: 0;
 }
-.ad-picker-id {
-  font-family: Consolas, Monaco, monospace;
-  font-size: 12px;
-  color: #909399;
+.ad-item:hover { background: #fafbfd; }
+.ad-item.is-checked { border-color: var(--c); background: color-mix(in srgb, var(--c) 7%, #fff); }
+.ad-item.is-history { background: #fbfbff; }
+.ad-main { flex: 1; min-width: 0; }
+.ad-row { display: flex; align-items: center; gap: 8px; }
+.ad-id { font-size: 12px; color: #909399; }
+.ad-time { margin-left: auto; font-size: 12px; color: #909399; }
+.ad-del { flex-shrink: 0; }
+.ad-text {
+  font-size: 13px; color: #4b5563; margin-top: 4px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.ad-picker-time {
-  margin-left: auto;
-  font-size: 12px;
-  color: #909399;
+.ad-thumb {
+  width: 60px; height: 60px; border-radius: 8px;
+  border: 1px solid var(--card-border); flex-shrink: 0; background: #000;
 }
-.ad-picker-text {
-  font-size: 13px;
-  color: #4b5563;
-  line-height: 1.5;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.ad-picker-thumb {
-  width: 64px;
-  height: 64px;
-  border-radius: 8px;
-  border: 1px solid var(--card-border);
-  flex-shrink: 0;
-  background: #000;
-}
+.deliver-actions { display: flex; align-items: center; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
 
 .deliver-result {
-  border: 1px solid var(--card-border);
-  border-radius: 10px;
-  padding: 12px 14px;
+  margin-top: 14px; border: 1px solid var(--card-border);
+  border-left: 4px solid var(--c); border-radius: 10px; padding: 12px 14px;
   background: #fafbfd;
 }
-.deliver-result-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
-}
-.deliver-platform {
-  font-weight: 600;
-  color: #1d2b4f;
-}
-.deliver-summary {
-  font-size: 13px;
-  color: #606266;
-  margin-bottom: 10px;
-}
-.deliver-summary .ok {
-  color: #67c23a;
-}
-.deliver-summary .fail {
-  color: #f56c6c;
-}
-.deliver-time {
-  margin-left: 10px;
-  font-size: 12px;
-  color: #909399;
-}
-.deliver-budget {
-  margin-left: 12px;
-  color: #2e4c86;
-  font-weight: 600;
-}
-.deliver-items {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  max-height: 24vh;
-  overflow-y: auto;
-}
-.deliver-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  flex-wrap: wrap;
-}
-.deliver-item-id {
-  font-family: Consolas, Monaco, monospace;
-  color: #909399;
-}
-.deliver-item-text {
-  color: #4b5563;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 200px;
-}
-.deliver-item-reach {
-  color: #409eff;
-}
-.deliver-item-err {
-  color: #f56c6c;
-}
-.deliver-empty {
-  font-size: 13px;
-  color: #909399;
-}
-.history-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  flex-wrap: wrap;
-}
-.history-count {
-  margin-left: auto;
-  color: #909399;
-  font-size: 12px;
-}
-.history-budget {
-  font-size: 12px;
-  color: #2e4c86;
-}
-.mono {
-  font-family: Consolas, Monaco, monospace;
-  font-size: 12px;
-  color: #606266;
-}
+.deliver-result-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.deliver-time { margin-left: auto; font-size: 12px; color: #909399; }
+.deliver-summary { font-size: 13px; color: #606266; }
+.deliver-summary .ok { color: #67c23a; }
+.deliver-summary .fail { color: #f56c6c; }
+
+.batch-row { display: flex; align-items: center; gap: 10px; font-size: 13px; flex-wrap: wrap; }
+.batch-budget { color: #2e4c86; }
+.batch-count { margin-left: auto; color: #909399; font-size: 12px; }
+.batch-items { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.batch-item { font-size: 12px; color: #606266; display: inline-flex; align-items: center; gap: 4px; }
+
+.detail-head { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+.detail-title { font-size: 17px; font-weight: 700; color: #1d2b4f; }
+.detail-sub { font-size: 12px; color: #909399; margin-top: 3px; }
+.detail-text { font-size: 14px; line-height: 1.9; color: #4b5563; margin: 0 0 14px; }
+.detail-features { display: flex; gap: 8px; flex-wrap: wrap; }
+.detail-features .feature-chip { background: #fff; border: 1px solid; }
+.detail-stats { display: flex; gap: 32px; }
+.detail-stat b { font-size: 24px; color: #1d2b4f; }
+.detail-stat span { display: block; font-size: 12px; color: #909399; margin-top: 2px; }
+.mono { font-family: Consolas, Monaco, monospace; font-size: 12px; color: #606266; }
 </style>
