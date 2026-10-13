@@ -86,6 +86,93 @@
         <div class="platform-content">
           <!-- 广告投放 -->
           <template v-if="tab === 'deliver'">
+            <el-card class="gen-card store-card" shadow="never">
+              <template #header>
+                <div class="gen-card-head">
+                  <span>店铺（{{ stores.length }}）</span>
+                  <div class="store-head-actions">
+                    <el-button size="small" :icon="Refresh" @click="loadStores">刷新</el-button>
+                    <el-button size="small" type="primary" :icon="Plus" @click="openStoreDialog">添加店铺</el-button>
+                  </div>
+                </div>
+              </template>
+              <el-empty
+                v-if="stores.length === 0"
+                description="该平台暂无店铺，点击右上角「添加店铺」录入店铺 / 商品信息"
+                :image-size="70"
+              />
+              <div v-else class="store-list">
+                <div
+                  v-for="s in stores"
+                  :key="s.id"
+                  class="store-item"
+                  :style="{ '--c': current.theme_color }"
+                >
+                  <div class="store-main">
+                    <div class="store-row">
+                      <span class="store-name">{{ s.name }}</span>
+                      <el-tag size="small" effect="plain">店铺 ID {{ s.shop_id }}</el-tag>
+                      <el-tag v-if="s.douyin_account" size="small" effect="plain" type="info">
+                        抖音号 {{ s.douyin_account }}
+                      </el-tag>
+                    </div>
+                    <div class="store-sub">
+                      <span>商品 {{ (s.products || []).length }} 个</span>
+                      <span v-if="s.products && s.products.length" class="mono">
+                        {{ s.products.map((p) => p.product_id).join(' / ') }}
+                      </span>
+                      <span v-if="s.note" class="store-note">{{ s.note }}</span>
+                    </div>
+                  </div>
+                  <div class="store-actions">
+                    <el-button
+                      size="small"
+                      :icon="MagicStick"
+                      :loading="simulatingId === s.id"
+                      @click="simulateStore(s)"
+                    >
+                      模拟投递检测
+                    </el-button>
+                    <el-button
+                      size="small"
+                      text
+                      type="danger"
+                      :icon="Delete"
+                      @click="handleDeleteStore(s)"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div
+                v-if="simulateResult"
+                class="preflight-result"
+                :class="simulateResult.ready ? 'is-ok' : 'is-fail'"
+              >
+                <div class="preflight-head">
+                  <el-tag size="small" :type="simulateResult.ready ? 'success' : 'danger'" effect="dark">
+                    {{ simulateResult.ready ? '可以投递' : '不可投递' }}
+                  </el-tag>
+                  <span>
+                    模拟投递检测（{{ simulateResult.mode }} 模式）
+                    <template v-if="simulateResult.store"> · 店铺 {{ simulateResult.store.name }}</template>
+                  </span>
+                  <el-button class="preflight-close" size="small" text :icon="Close" @click="simulateResult = null" />
+                </div>
+                <ul class="preflight-checks">
+                  <li
+                    v-for="(c, i) in simulateResult.checks"
+                    :key="i"
+                    :class="c.ok ? 'ok' : 'fail'"
+                  >
+                    <el-icon><component :is="c.ok ? CircleCheck : CircleClose" /></el-icon>
+                    <span class="check-name">{{ c.name }}</span>
+                    <em v-if="c.detail" class="check-detail">{{ c.detail }}</em>
+                  </li>
+                </ul>
+              </div>
+            </el-card>
+
             <el-card class="gen-card" shadow="never">
               <template #header>
                 <div class="gen-card-head">
@@ -284,6 +371,33 @@
         </div>
       </div>
     </template>
+
+    <el-dialog v-model="storeDialog" title="添加店铺" width="520px" append-to-body>
+      <el-form label-width="96px" :model="storeForm">
+        <el-form-item label="店铺名称">
+          <el-input v-model="storeForm.name" placeholder="如：抖音小店 312014721" />
+        </el-form-item>
+        <el-form-item label="店铺 ID" required>
+          <el-input v-model="storeForm.shop_id" placeholder="如：312014721" />
+        </el-form-item>
+        <el-form-item label="抖音号">
+          <el-input v-model="storeForm.douyin_account" placeholder="如：cisheng88193" />
+        </el-form-item>
+        <el-form-item label="广告主 ID">
+          <el-input v-model="storeForm.advertiser_id" placeholder="千川广告主账户 ID（可选）" />
+        </el-form-item>
+        <el-form-item label="商品 ID">
+          <el-input v-model="storeForm.products" placeholder="多个用逗号分隔，如：3848012001225867368" />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="storeForm.note" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="storeDialog = false">取消</el-button>
+        <el-button type="primary" :loading="savingStore" @click="submitStore">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -292,11 +406,13 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Promotion, ArrowRight, ArrowLeft, Refresh, Clock, Document, Delete,
+  Plus, MagicStick, CircleCheck, CircleClose, Close,
 } from '@element-plus/icons-vue'
 import PlatformLogo from '@/components/PlatformLogo.vue'
 import {
   listDeliveryPlatforms, getPlatformDetail, getPlatformAds, getPlatformDeliveries,
   submitDelivery, getDeliveryConfig, deletePlatformAd,
+  listStores, createStore, deleteStore, preflightQianchuan,
 } from '@/api'
 import { formatTime, mediaUrl } from '@/utils/format'
 
@@ -325,6 +441,14 @@ const budget = ref(10000)
 const budgetConfig = ref(null)
 const submitting = ref(false)
 const latest = ref(null)
+
+// 店铺信息（按平台区分，落盘到 data/stores/<platform>.json）+ 模拟投递检测
+const stores = ref([])
+const storeDialog = ref(false)
+const savingStore = ref(false)
+const simulatingId = ref('')
+const simulateResult = ref(null)
+const storeForm = ref({ name: '', shop_id: '', douyin_account: '', advertiser_id: '', products: '', note: '' })
 
 const themeStyle = computed(() =>
   current.value ? { background: current.value.bg_color, minHeight: '100%' } : {},
@@ -368,10 +492,13 @@ function exitPlatform() {
   current.value = null
   latest.value = null
   selected.value = []
+  stores.value = []
+  simulateResult.value = null
 }
 
 async function loadPlatform() {
   if (!current.value) return
+  simulateResult.value = null
   const [ads, dels, detail] = await Promise.all([
     getPlatformAds(current.value.value).catch(() => ({ available: [], history: [] })),
     getPlatformDeliveries(current.value.value).catch(() => []),
@@ -381,6 +508,88 @@ async function loadPlatform() {
   historyAds.value = ads?.history || []
   deliveries.value = dels || []
   if (detail) current.value = detail
+  await loadStores()
+}
+
+// ---------- 店铺信息 ----------
+async function loadStores() {
+  if (!current.value) return
+  try {
+    const res = await listStores(current.value.value)
+    stores.value = res?.stores || []
+  } catch {
+    stores.value = []
+  }
+}
+
+function openStoreDialog() {
+  storeForm.value = { name: '', shop_id: '', douyin_account: '', advertiser_id: '', products: '', note: '' }
+  storeDialog.value = true
+}
+
+async function submitStore() {
+  if (!storeForm.value.shop_id.trim()) {
+    ElMessage.warning('请填写店铺 ID')
+    return
+  }
+  savingStore.value = true
+  try {
+    await createStore(current.value.value, { ...storeForm.value })
+    ElMessage.success('店铺已添加')
+    storeDialog.value = false
+    await loadStores()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.msg || e?.message || '添加店铺失败')
+  } finally {
+    savingStore.value = false
+  }
+}
+
+async function handleDeleteStore(store) {
+  try {
+    await ElMessageBox.confirm(`确认删除店铺「${store.name}」？删除后不可恢复。`, '删除店铺', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+  try {
+    await deleteStore(current.value.value, store.id)
+    ElMessage.success('店铺已删除')
+    await loadStores()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.msg || e?.message || '删除店铺失败')
+  }
+}
+
+async function simulateStore(store) {
+  if (current.value.value !== 'qianchuan') {
+    ElMessage.info('该平台投递 Agent 尚未接入，暂仅支持「巨量千川（抖音）」模拟投递检测')
+    return
+  }
+  const productId = store.products?.[0]?.product_id || ''
+  if (!productId) {
+    ElMessage.warning('该店铺未登记商品 ID，无法模拟投递')
+    return
+  }
+  simulatingId.value = store.id
+  simulateResult.value = null
+  try {
+    const res = await preflightQianchuan({
+      shop_id: store.shop_id,
+      product_id: productId,
+      aweme_id: store.aweme_id || store.douyin_account,
+    })
+    simulateResult.value = res
+    if (res?.ready) ElMessage.success('模拟投递检测通过：可以投递')
+    else ElMessage.warning('模拟投递检测未通过，请查看明细')
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.msg || e?.message || '模拟投递检测失败')
+  } finally {
+    simulatingId.value = ''
+  }
 }
 
 function switchTab(key) {
@@ -623,5 +832,38 @@ onMounted(async () => {
 .detail-stats { display: flex; gap: 32px; }
 .detail-stat b { font-size: 24px; color: #1d2b4f; }
 .detail-stat span { display: block; font-size: 12px; color: #909399; margin-top: 2px; }
+
+/* ===== 店铺信息 ===== */
+.store-card { margin-bottom: 16px; }
+.store-head-actions { display: flex; gap: 8px; }
+.store-list { display: flex; flex-direction: column; gap: 8px; }
+.store-item {
+  display: flex; align-items: center; gap: 12px;
+  border: 1px solid var(--card-border); border-left: 3px solid var(--c);
+  border-radius: 10px; padding: 10px 14px;
+}
+.store-main { flex: 1; min-width: 0; }
+.store-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.store-name { font-size: 14px; font-weight: 600; color: #1d2b4f; }
+.store-sub {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin-top: 4px; font-size: 12px; color: #909399;
+}
+.store-note { color: #b1b3b8; }
+.store-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+
+.preflight-result {
+  margin-top: 12px; border: 1px solid var(--card-border);
+  border-left: 4px solid #67c23a; border-radius: 10px; padding: 12px 14px; background: #fafcf9;
+}
+.preflight-result.is-fail { border-left-color: #f56c6c; background: #fef8f8; }
+.preflight-head { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #606266; }
+.preflight-close { margin-left: auto; }
+.preflight-checks { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.preflight-checks li { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.preflight-checks li.ok { color: #529b2e; }
+.preflight-checks li.fail { color: #c45656; }
+.check-name { color: #4b5563; }
+.check-detail { color: #909399; font-style: normal; font-size: 12px; }
 .mono { font-family: Consolas, Monaco, monospace; font-size: 12px; color: #606266; }
 </style>

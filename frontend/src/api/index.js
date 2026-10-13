@@ -290,6 +290,45 @@ export function deletePlatformAd(platformKey, adId) {
   return request.delete(`/delivery/platforms/${platformKey}/ads/${adId}`)
 }
 
+// ---------- 店铺信息（按平台区分，落盘到 data/stores/<platform>.json） ----------
+
+/** 某平台下的全部店铺：{ platform, platform_label, stores: [...] } */
+export function listStores(platform) {
+  return request.get(`/stores/${platform}`)
+}
+
+/** 新增店铺：{ name?, shop_id, douyin_account?, aweme_id?, advertiser_id?, products?, note? } */
+export function createStore(platform, payload) {
+  return request.post(`/stores/${platform}`, payload)
+}
+
+/** 删除一条店铺 */
+export function deleteStore(platform, storeId) {
+  return request.delete(`/stores/${platform}/${storeId}`)
+}
+
+// ---------- 抖音 · 巨量千川 投递 Agent（独立 MCP 工具） ----------
+
+/** 投递所需参数说明（店铺 ID / 商品 ID / 抖音号 / 素材等） */
+export function getQianchuanRequirements() {
+  return request.get('/qianchuan/requirements')
+}
+
+/** 千川账户概览（广告主 / 余额 / 钱包） */
+export function getQianchuanAccount() {
+  return request.get('/qianchuan/account')
+}
+
+/** 投递预检：{ shop_id, product_id, aweme_id, video_id?, image_id? } → { ready, checks } */
+export function preflightQianchuan(payload) {
+  return request.post('/qianchuan/preflight', payload)
+}
+
+/** 执行投放（预检 + 提交，默认 mock） */
+export function deliverQianchuan(payload) {
+  return request.post('/qianchuan/deliver', payload)
+}
+
 // ---------- 充值中心（独立图文 API 账户，Mock 记账） ----------
 
 /** 账户概览：余额 / 点数 / 计费口径 */

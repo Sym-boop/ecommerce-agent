@@ -52,6 +52,8 @@ from app.api.history_router import router as history_router
 from app.api.adgen_router import router as adgen_router
 from app.api.batch_router import router as batch_router
 from app.api.billing_router import router as billing_router
+from app.api.qianchuan_router import router as qianchuan_router
+from app.api.store_router import router as store_router
 from fastapi.staticfiles import StaticFiles
 
 
@@ -123,6 +125,8 @@ app.include_router(history_router)
 app.include_router(adgen_router)
 app.include_router(batch_router)
 app.include_router(billing_router)
+app.include_router(qianchuan_router)
+app.include_router(store_router)
 # ---------------------------------------------------------------------------
 # 统一响应体
 # ---------------------------------------------------------------------------

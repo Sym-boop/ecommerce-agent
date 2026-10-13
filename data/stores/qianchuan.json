@@ -1,0 +1,23 @@
+{
+  "platform": "qianchuan",
+  "platform_label": "巨量千川（抖音）",
+  "updated_at": "2026-10-13T14:16:06",
+  "stores": [
+    {
+      "id": "ST-20261013-a1b2c3",
+      "name": "抖音小店 312014721",
+      "shop_id": "312014721",
+      "douyin_account": "cisheng88193",
+      "aweme_id": "cisheng88193",
+      "advertiser_id": "",
+      "note": "用户提供的抖音店铺",
+      "products": [
+        {
+          "product_id": "3848012001225867368",
+          "name": "主推商品"
+        }
+      ],
+      "created_at": "2026-10-13T21:50:00"
+    }
+  ]
+}
