@@ -62,6 +62,12 @@ const routes = [
     component: () => import('@/views/HelpCenter.vue'),
     meta: { title: '帮助中心' },
   },
+  {
+    path: '/system',
+    name: 'system-center',
+    component: () => import('@/views/SystemCenter.vue'),
+    meta: { title: '系统中心' },
+  },
 ]
 
 const router = createRouter({

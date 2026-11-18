@@ -13,14 +13,16 @@
 """
 from __future__ import annotations
 
-import json
 import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
 
+from app.common import json_store
+
 _ROOT = Path(__file__).resolve().parents[3]
-_STORE_PATH = _ROOT / "data" / "history" / "records.json"
+# 数据文件名（相对 data/）：读写统一走 json_store，以复用存储后端与测试隔离
+_STORE_FILE = "history/records.json"
 
 _LOCK = threading.Lock()
 _LOADED = False
@@ -31,12 +33,7 @@ STAGE_WIP = "wip"
 
 
 def _load() -> list[dict]:
-    if not _STORE_PATH.exists():
-        return []
-    try:
-        raw = json.loads(_STORE_PATH.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return []
+    raw = json_store.read_json(_STORE_FILE, [])
     return [r for r in (raw if isinstance(raw, list) else []) if isinstance(r, dict) and r.get("id")]
 
 
@@ -52,10 +49,8 @@ def _ensure_loaded() -> None:
 
 
 def _flush() -> None:
-    _STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    _STORE_PATH.write_text(
-        json.dumps(_RECORDS, ensure_ascii=False, indent=2), encoding="utf-8",
-    )
+    """落盘（经 json_store → 走当前存储后端，并支持测试内存隔离）。"""
+    json_store.write_json(_STORE_FILE, _RECORDS)
 
 
 def list_records() -> list[dict]:

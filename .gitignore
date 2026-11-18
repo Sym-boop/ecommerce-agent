@@ -51,3 +51,46 @@ models/
 # ===== 生产部署 =====
 .env.prod
 .env.prod.local
+
+# ===== 面试准备材料（不公开）=====
+追问应答手册.md
+模拟面试实录.md
+面试口稿.md
+面试技术全景.md
+项目介绍话术.md
+上台讲稿.md
+面试题库.md
+
+# ===== 运行时产物（不入库）=====
+data/*.sqlite
+data/*.sqlite-shm
+data/*.sqlite-wal
+backend/data/*.sqlite
+backend/data/*.sqlite-shm
+backend/data/*.sqlite-wal
+data/audit.jsonl
+data/knowledge_feedback.jsonl
+backend/data/audit.jsonl
+backend/data/knowledge_feedback.jsonl
+data/metrics/
+data/reports/
+runtime/
+jieba.cache
+*.log
+
+# 本地数据库（二进制，每次运行都变）
+backend/data/app.db
+data/store.sqlite*
+
+# ===== 面世材料（不入公开仓库）=====
+简历项目背景.md
+项目背景.md
+项目改进建议.md
+前端页面讲解稿.md
+面试口稿-电商广告平台.md
+改进落地报告.md
+docs/presentation-guide.md
+
+# ===== 临时文件 =====
+# 误生成的临时文件（全角冒号路径）
+C?Users*

@@ -1,0 +1,329 @@
+[
+  {
+    "id": "EV-1398cc9be0",
+    "at": "2026-10-15T11:49:05",
+    "ad_id": "",
+    "session_id": "AGEN-20261015-c7274e",
+    "source": "generation",
+    "actor": "",
+    "title": "早八通勤党冲！这瓶防晒我空瓶3支了😭",
+    "score": 80.0,
+    "platform": "xiaohongshu",
+    "metrics": {
+      "format_ok": true,
+      "violation_free": true,
+      "length_ok": true,
+      "tag_count_ok": true,
+      "length": 211,
+      "length_range": [
+        80,
+        1200
+      ],
+      "tag_count": 5,
+      "sell_point_coverage": 0.0,
+      "sell_points_covered": [],
+      "sell_points_missing": [
+        "清爽不假白",
+        "敏感肌适用"
+      ],
+      "paragraphs": 4,
+      "emoji_count": 5,
+      "reference_count": 0
+    }
+  },
+  {
+    "id": "EV-cc043d6e9f",
+    "at": "2026-10-15T11:48:44",
+    "ad_id": "",
+    "session_id": "AGEN-20261015-60895a",
+    "source": "generation",
+    "actor": "",
+    "title": "被夸一路！这条法式碎花裙我连穿3天！",
+    "score": 86.7,
+    "platform": "xiaohongshu",
+    "metrics": {
+      "format_ok": true,
+      "violation_free": true,
+      "length_ok": true,
+      "tag_count_ok": true,
+      "length": 250,
+      "length_range": [
+        80,
+        1200
+      ],
+      "tag_count": 5,
+      "sell_point_coverage": 0.3333,
+      "sell_points_covered": [
+        "显瘦"
+      ],
+      "sell_points_missing": [
+        "垂感好",
+        "度假风"
+      ],
+      "paragraphs": 5,
+      "emoji_count": 4,
+      "reference_count": 0
+    }
+  },
+  {
+    "id": "EV-1e085c3a71",
+    "at": "2026-10-15T11:46:01",
+    "ad_id": "",
+    "session_id": "AGEN-20261015-8d5e06",
+    "source": "generation",
+    "actor": "",
+    "title": "被问3次链接！法式碎花裙度假约会都能穿🌷",
+    "score": 93.3,
+    "platform": "xiaohongshu",
+    "metrics": {
+      "format_ok": true,
+      "violation_free": true,
+      "length_ok": true,
+      "tag_count_ok": true,
+      "length": 267,
+      "length_range": [
+        80,
+        1200
+      ],
+      "tag_count": 5,
+      "sell_point_coverage": 0.6667,
+      "sell_points_covered": [
+        "显瘦",
+        "度假风"
+      ],
+      "sell_points_missing": [
+        "垂感好"
+      ],
+      "paragraphs": 4,
+      "emoji_count": 5,
+      "reference_count": 0
+    }
+  },
+  {
+    "id": "EV-205096a0ab",
+    "at": "2026-10-15T11:39:44",
+    "ad_id": "",
+    "session_id": "AGEN-20261015-0593a0",
+    "source": "generation",
+    "actor": "",
+    "title": "早八人狂喜！3分钟出门的轻透防晒隔离霜☀️",
+    "score": 80.0,
+    "platform": "xiaohongshu",
+    "metrics": {
+      "format_ok": true,
+      "violation_free": true,
+      "length_ok": true,
+      "tag_count_ok": true,
+      "length": 222,
+      "length_range": [
+        80,
+        1200
+      ],
+      "tag_count": 5,
+      "sell_point_coverage": 0.0,
+      "sell_points_covered": [],
+      "sell_points_missing": [
+        "清爽不假白",
+        "敏感肌适用"
+      ],
+      "paragraphs": 4,
+      "emoji_count": 3,
+      "reference_count": 0
+    }
+  },
+  {
+    "id": "EV-e842cca02f",
+    "at": "2026-10-15T11:37:15",
+    "ad_id": "",
+    "session_id": "AGEN-20261015-3f674c",
+    "source": "generation",
+    "actor": "",
+    "title": "早八人快看！1分钟出门的轻透防晒隔离霜，我连用3周了！",
+    "score": 80.0,
+    "platform": "xiaohongshu",
+    "metrics": {
+      "format_ok": true,
+      "violation_free": true,
+      "length_ok": true,
+      "tag_count_ok": true,
+      "length": 193,
+      "length_range": [
+        80,
+        1200
+      ],
+      "tag_count": 5,
+      "sell_point_coverage": 0.0,
+      "sell_points_covered": [],
+      "sell_points_missing": [
+        "清爽不假白",
+        "敏感肌适用"
+      ],
+      "paragraphs": 4,
+      "emoji_count": 4,
+      "reference_count": 0
+    }
+  },
+  {
+    "id": "EV-ba708bfb9d",
+    "at": "2026-10-15T11:36:46",
+    "ad_id": "",
+    "session_id": "AGEN-20261015-ed923b",
+    "source": "generation",
+    "actor": "",
+    "title": "早八人狂喜！1支搞定通勤防晒+隔离☀️",
+    "score": 80.0,
+    "platform": "xiaohongshu",
+    "metrics": {
+      "format_ok": true,
+      "violation_free": true,
+      "length_ok": true,
+      "tag_count_ok": true,
+      "length": 174,
+      "length_range": [
+        80,
+        1200
+      ],
+      "tag_count": 5,
+      "sell_point_coverage": 0.0,
+      "sell_points_covered": [],
+      "sell_points_missing": [
+        "清爽不假白",
+        "敏感肌适用"
+      ],
+      "paragraphs": 4,
+      "emoji_count": 4,
+      "reference_count": 0
+    }
+  },
+  {
+    "id": "EV-263294fa12",
+    "at": "2026-10-15T11:31:29",
+    "ad_id": "",
+    "session_id": "AGEN-20261015-603c65",
+    "source": "generation",
+    "actor": "",
+    "title": "谁懂啊！测试商品这2个卖点我能夸3天！",
+    "score": 100.0,
+    "platform": "xiaohongshu",
+    "metrics": {
+      "format_ok": true,
+      "violation_free": true,
+      "length_ok": true,
+      "tag_count_ok": true,
+      "length": 193,
+      "length_range": [
+        80,
+        1200
+      ],
+      "tag_count": 5,
+      "sell_point_coverage": 1.0,
+      "sell_points_covered": [
+        "卖点A"
+      ],
+      "sell_points_missing": [],
+      "paragraphs": 4,
+      "emoji_count": 4,
+      "reference_count": 0
+    }
+  },
+  {
+    "id": "EV-2b47563e6a",
+    "at": "2026-10-15T11:31:03",
+    "ad_id": "",
+    "session_id": "AGEN-20261015-1749c8",
+    "source": "generation",
+    "actor": "",
+    "title": "早八人狂喜！3秒出门的通勤防晒不假白🌞",
+    "score": 80.0,
+    "platform": "xiaohongshu",
+    "metrics": {
+      "format_ok": true,
+      "violation_free": true,
+      "length_ok": true,
+      "tag_count_ok": true,
+      "length": 179,
+      "length_range": [
+        80,
+        1200
+      ],
+      "tag_count": 5,
+      "sell_point_coverage": 0.0,
+      "sell_points_covered": [],
+      "sell_points_missing": [
+        "清爽不假白",
+        "敏感肌适用"
+      ],
+      "paragraphs": 4,
+      "emoji_count": 5,
+      "reference_count": 0
+    }
+  },
+  {
+    "id": "EV-40b4bf15c3",
+    "at": "2026-10-15T11:26:14",
+    "ad_id": "",
+    "session_id": "AGEN-20261015-5ac418",
+    "source": "generation",
+    "actor": "",
+    "title": "谁懂啊！155穿这条法式碎花裙被问链接了！",
+    "score": 93.3,
+    "platform": "xiaohongshu",
+    "metrics": {
+      "format_ok": true,
+      "violation_free": true,
+      "length_ok": true,
+      "tag_count_ok": true,
+      "length": 211,
+      "length_range": [
+        80,
+        1200
+      ],
+      "tag_count": 5,
+      "sell_point_coverage": 0.6667,
+      "sell_points_covered": [
+        "垂感好",
+        "显瘦"
+      ],
+      "sell_points_missing": [
+        "度假风"
+      ],
+      "paragraphs": 4,
+      "emoji_count": 4,
+      "reference_count": 0
+    }
+  },
+  {
+    "id": "EV-e33190018e",
+    "at": "2026-10-15T11:23:08",
+    "ad_id": "",
+    "session_id": "AGEN-20261015-134812",
+    "source": "generation",
+    "actor": "",
+    "title": "3次被问链接！这条法式碎花裙把度假和约会都包了！",
+    "score": 86.7,
+    "platform": "xiaohongshu",
+    "metrics": {
+      "format_ok": true,
+      "violation_free": true,
+      "length_ok": true,
+      "tag_count_ok": true,
+      "length": 300,
+      "length_range": [
+        80,
+        1200
+      ],
+      "tag_count": 5,
+      "sell_point_coverage": 0.3333,
+      "sell_points_covered": [
+        "显瘦"
+      ],
+      "sell_points_missing": [
+        "垂感好",
+        "度假风"
+      ],
+      "paragraphs": 5,
+      "emoji_count": 5,
+      "reference_count": 0
+    }
+  }
+]

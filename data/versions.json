@@ -1,0 +1,20 @@
+{
+  "AD-1": [
+    {
+      "version": 1,
+      "at": "2026-10-15T12:02:37",
+      "actor": "u1",
+      "title": "t1",
+      "content": "c1",
+      "note": "原始"
+    },
+    {
+      "version": 2,
+      "at": "2026-10-15T12:02:37",
+      "actor": "u2",
+      "title": "t2",
+      "content": "c2",
+      "note": "修正"
+    }
+  ]
+}

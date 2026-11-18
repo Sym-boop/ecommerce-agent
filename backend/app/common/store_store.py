@@ -36,7 +36,6 @@ from pathlib import Path
 # backend/app/common/store_store.py → parents[3] = 仓库根目录
 _ROOT = Path(__file__).resolve().parents[3]
 _STORES_DIR = _ROOT / "data" / "stores"
-
 # 平台 key → 展示名（与 app/api/delivery_router.py 的 DELIVERY_PLATFORMS 保持一致）
 PLATFORM_LABELS = {
     "qianchuan": "巨量千川（抖音）",

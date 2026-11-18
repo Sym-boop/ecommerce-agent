@@ -23,6 +23,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import threading
 import uuid
 from datetime import datetime, timedelta
@@ -37,9 +38,109 @@ _AD_FILE_EXISTED = json_store.exists(_AD_FILE)
 _ADS: list[dict] = json_store.read_list(_AD_FILE, [])
 
 
+def content_fingerprint(ad_type: str, title: str = "", content: str = "") -> str:
+    """内容指纹：用于识别「同一份素材被重复登记」。
+
+    原来的实现没有幂等保护，重复点击保存 / 重试会让同一份文案入库多条，
+    审查中心出现内容完全相同的多张卡片需要重复审批。
+    """
+    raw = f"{(ad_type or '').strip()}|{(title or '').strip()}|{(content or '').strip()}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _ensure_fingerprints() -> None:
+    """为历史数据补齐指纹（老记录没有该字段）。"""
+    for ad in _ADS:
+        if not isinstance(ad, dict):
+            continue
+        if not ad.get("fingerprint"):
+            ad["fingerprint"] = content_fingerprint(
+                ad.get("type") or "", ad.get("title") or "", ad.get("content") or ""
+            )
+
+
+def dedupe_existing() -> int:
+    """清理历史遗留的重复物料（保留最早一条），返回删除条数。
+
+    判定口径：**同类型 + 同标题 + 同正文** 视为重复。
+    只对未投放的重复项去重；已 delivered 的历史记录一律保留（历史不可篡改）。
+    """
+    global _ADS
+    with _LOCK:
+        _ensure_fingerprints()
+        seen: dict[str, dict] = {}
+        kept: list[dict] = []
+        removed = 0
+        # _ADS 是时间倒序，倒序遍历可保证「最早的一条」优先入选
+        for ad in reversed(_ADS):
+            fp = ad.get("fingerprint")
+            if ad.get("stage") == "delivered" or not fp:
+                kept.append(ad)
+                continue
+            if fp in seen:
+                removed += 1
+                continue
+            seen[fp] = ad
+            kept.append(ad)
+        if removed:
+            _ADS = list(reversed(kept))
+            _persist()
+    return removed
+
+
 def _persist() -> None:
     """把当前广告物料原子写盘（调用方需持有 _LOCK）。"""
     json_store.write_json(_AD_FILE, _ADS)
+
+
+def revalidate_violations() -> dict:
+    """用**当前**违禁词规则重新校验存量物料的审查结论。
+
+    为什么需要：审查结论（`violations` / `copy_ok`）是**登记时算好并落盘**的。
+    检测规则被修正后（例如修掉了单字「最」的子串误报），历史数据里仍留着按旧规
+    则产生的误报——表现为"改了 bug 但界面还是显示违规"。
+
+    这里在启动时用当前规则重算一次，让存量数据**自愈**。
+    已 delivered / rejected 的终态物料不改动（保留当时的事实结论）。
+
+    返回 {"checked", "fixed", "unavailable"}。
+    """
+    from app.common.banned_words import BannedWordsUnavailable, check
+
+    fixed = checked = 0
+    with _LOCK:
+        for ad in _ADS:
+            if not isinstance(ad, dict):
+                continue
+            if ad.get("stage") in {"delivered", "rejected"}:
+                continue
+            text = f"{ad.get('title') or ''} {ad.get('content') or ''}"
+            try:
+                hits = check(text)
+            except BannedWordsUnavailable:
+                return {"checked": checked, "fixed": fixed, "unavailable": True}
+            checked += 1
+            violations = [
+                {
+                    "word": h.get("word"),
+                    "type": h.get("category") or "违禁词",
+                    "suggestion": h.get("replacement") or "",
+                    "context": h.get("context") or "",
+                    "start": h.get("start", -1),
+                }
+                for h in hits
+            ]
+            new_ok = not violations
+            old_words = [v.get("word") for v in (ad.get("violations") or [])]
+            new_words = [v["word"] for v in violations]
+            if old_words != new_words or bool(ad.get("copy_ok")) != new_ok:
+                ad["violations"] = violations
+                ad["copy_ok"] = new_ok
+                ad["review_revalidated_at"] = datetime.now().isoformat(timespec="seconds")
+                fixed += 1
+        if fixed:
+            _persist()
+    return {"checked": checked, "fixed": fixed, "unavailable": False}
 
 
 def add_ad(
@@ -60,6 +161,12 @@ def add_ad(
     stage: str = "pending",
     created_at: datetime | None = None,
     status: str = "published",
+    review_unavailable: bool = False,
+    dedupe: bool = True,
+    generated_by: str = "",
+    category: str = "",
+    source: str = "ai",
+    session_id: str = "",
 ) -> dict:
     """登记一条广告物料。
 
@@ -67,28 +174,50 @@ def add_ad(
     input_image: 用户上传的商品图片（媒体 URL），文案类可为空
     result_url: 图文 / 视频的成品地址；文案类为空
     stage: 流水线阶段，由 pipeline 评估后写入
+    review_unavailable: 风控词表不可用时的留痕标记（fail-closed）
+    dedupe: 是否对「同类型+同标题+同正文」的未投放物料做幂等去重
+    generated_by: 生成者（用于职责分离：禁止自审）
+    category / source / session_id: 供数据飞轮与检索过滤使用
+
+    返回: 新登记（或命中去重后已存在的）物料记录。
     """
     created = created_at or datetime.now()
-    record = {
-        "id": f"AD-{created.strftime('%Y%m%d')}-{uuid.uuid4().hex[:6]}",
-        "type": ad_type,
-        "title": title,
-        "prompt": prompt,
-        "platform": platform,
-        "content": content,
-        "input_image": input_image,
-        "result_url": result_url,
-        "budget": budget,
-        "copy_ok": copy_ok,
-        "budget_ok": budget_ok,
-        "violations": violations or [],
-        "budget_verdict": budget_verdict,
-        "budget_msg": budget_msg,
-        "stage": stage,
-        "status": status,
-        "created_at": created.isoformat(timespec="seconds"),
-    }
+    fingerprint = content_fingerprint(ad_type, title, content)
+
     with _LOCK:
+        if dedupe:
+            _ensure_fingerprints()
+            for ad in _ADS:
+                if ad.get("fingerprint") == fingerprint and ad.get("stage") != "delivered":
+                    # 幂等：同一份素材重复保存时返回既有记录，不再新增
+                    ad["_deduped"] = True
+                    return ad
+
+        record = {
+            "id": f"AD-{created.strftime('%Y%m%d')}-{uuid.uuid4().hex[:6]}",
+            "type": ad_type,
+            "title": title,
+            "prompt": prompt,
+            "platform": platform,
+            "content": content,
+            "input_image": input_image,
+            "result_url": result_url,
+            "budget": budget,
+            "copy_ok": copy_ok,
+            "budget_ok": budget_ok,
+            "violations": violations or [],
+            "budget_verdict": budget_verdict,
+            "budget_msg": budget_msg,
+            "stage": stage,
+            "status": status,
+            "review_unavailable": review_unavailable,
+            "fingerprint": fingerprint,
+            "generated_by": generated_by,
+            "category": category,
+            "source": source,
+            "session_id": session_id,
+            "created_at": created.isoformat(timespec="seconds"),
+        }
         _ADS.insert(0, record)
         _persist()
     return record

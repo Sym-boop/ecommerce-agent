@@ -12,14 +12,16 @@
 from __future__ import annotations
 
 import csv
-import json
 import threading
 import uuid
 from pathlib import Path
 
+from app.common import json_store
+
 _ROOT = Path(__file__).resolve().parents[3]
 _CSV_PATH = _ROOT / "data" / "raw" / "our_products.csv"
-_STORE_PATH = _ROOT / "data" / "products.json"
+# 数据文件名（相对 data/）：读写统一走 json_store，以复用存储后端与测试隔离
+_STORE_FILE = "products.json"
 
 _LOCK = threading.Lock()
 _LOADED = False
@@ -57,12 +59,7 @@ def _load_catalog() -> list[dict]:
 
 def _load_custom() -> list[dict]:
     """读取用户自定义商品（落盘文件不存在时返回空）。"""
-    if not _STORE_PATH.exists():
-        return []
-    try:
-        raw = json.loads(_STORE_PATH.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return []
+    raw = json_store.read_json(_STORE_FILE, [])
     items: list[dict] = []
     for item in raw if isinstance(raw, list) else []:
         if isinstance(item, dict) and item.get("name"):
@@ -92,12 +89,9 @@ def _ensure_loaded() -> None:
 
 
 def _flush_custom() -> None:
-    """把自定义商品写回 data/products.json。"""
+    """把自定义商品写回 data/products.json（经 json_store，支持存储后端与测试隔离）。"""
     custom = [p for p in _PRODUCTS if p.get("source") == "custom"]
-    _STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    _STORE_PATH.write_text(
-        json.dumps(custom, ensure_ascii=False, indent=2), encoding="utf-8",
-    )
+    json_store.write_json(_STORE_FILE, custom)
 
 
 def list_products() -> list[dict]:

@@ -77,7 +77,14 @@ def select_product(state: AdGenState) -> dict:
 
 
 def gen_copy(state: AdGenState) -> dict:
-    """调用文案 Agent 生成文案（商品与关键词不变时用于「重新生成」）。"""
+    """调用文案 Agent 生成文案（商品与关键词不变时用于「重新生成」）。
+
+    入口先检查上游是否已失败：`select_product` 校验商品名不通过时会把
+    status 置为 failed，此时**不应当继续调大模型**（浪费调用且产出垃圾文案）。
+    """
+    if state.get("status") == "failed":
+        return {}
+
     from app.agent.copywriter import CopyWriterInput, generate_copy
 
     product = state.get("product") or {}
@@ -111,12 +118,22 @@ def gen_copy(state: AdGenState) -> dict:
 
 
 def review_copy(state: AdGenState) -> dict:
-    """文案审查：复用违禁词库（milvus_cli.check_banned_words）。"""
+    """文案审查：复用违禁词库（app.common.banned_words）。
+
+    fail-closed：词表不可用时**不能判定为「通过」**，而是标记 `unavailable`，
+    让下游按「需人工处置」处理，避免风控静默失效。
+    """
+    from app.common.banned_words import BannedWordsUnavailable
     from app.common.pipeline import check_copy
 
     copy = state.get("copy") or {}
     text = f"{copy.get('title') or ''} {copy.get('content') or ''}"
-    violations = check_copy(text)
+    try:
+        violations = check_copy(text)
+    except BannedWordsUnavailable as exc:
+        logger.error("违禁词表不可用，审查 fail-closed: %s", exc)
+        return {"review": {"copy_ok": False, "unavailable": True,
+                           "error": str(exc), "violations": []}}
     return {"review": {"copy_ok": not violations, "violations": violations}}
 
 
@@ -206,6 +223,16 @@ def finish(state: AdGenState) -> dict:
 # 条件边
 # ---------------------------------------------------------------------------
 
+def route_after_select(state: AdGenState) -> str:
+    """选品失败（商品名为空）时短路到收口，不进入生成节点。
+
+    修复前这里是**无条件边** `select_product → gen_copy`，而 `gen_copy` 不检查
+    status，导致商品名为空时仍会调用大模型、并把 status 覆盖成 copy_done，
+    最终报 `done` —— 错误被吞掉（实测复现）。
+    """
+    return "finish" if state.get("status") == "failed" else "gen_copy"
+
+
 def route_after_copy(state: AdGenState) -> str:
     return "finish" if state.get("status") == "failed" else "review_copy"
 
@@ -238,8 +265,40 @@ def _next_asset(state: AdGenState) -> str:
 # ---------------------------------------------------------------------------
 # 图编译
 # ---------------------------------------------------------------------------
+# checkpointer 决定「断点暂停的流程能否跨进程恢复」。
+#
+# 历史实现是 InMemorySaver：检查点只在进程内存里，后端一重启、或者
+# 多 worker 部署（请求落到没有该 thread 检查点的实例上），暂停中的审批就
+# 再也恢复不了。所以这里优先用持久化的 SqliteSaver，落盘到
+# <仓库根>/data/graph_checkpoints.sqlite；sqlite 依赖缺失时回退内存并告警。
 
-_CHECKPOINTER = InMemorySaver()
+def _build_checkpointer():
+    try:
+        import sqlite3
+        from pathlib import Path
+
+        from langgraph.checkpoint.sqlite import SqliteSaver
+
+        db_path = Path("data") / "graph_checkpoints.sqlite"
+        if not db_path.parent.exists():
+            db_path = Path(__file__).resolve().parents[3] / db_path
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        # check_same_thread=False：uvicorn 可能在非创建线程里调用
+        conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        saver = SqliteSaver(conn)
+        logger.info("LangGraph checkpointer: SqliteSaver（持久化，%s）", db_path)
+        return saver
+    except Exception as exc:  # noqa: BLE001
+        from langgraph.checkpoint.memory import InMemorySaver
+
+        logger.warning(
+            "SqliteSaver 不可用（%s），回退 InMemorySaver："
+            "断点审批将无法跨进程/重启恢复，多 worker 部署会失效", exc,
+        )
+        return InMemorySaver()
+
+
+_CHECKPOINTER = _build_checkpointer()
 
 
 def build_graph():
@@ -254,7 +313,11 @@ def build_graph():
     graph.add_node("finish", finish)
 
     graph.add_edge(START, "select_product")
-    graph.add_edge("select_product", "gen_copy")
+    # 选品校验失败时短路到收口（不要进入生成节点空跑大模型）
+    graph.add_conditional_edges(
+        "select_product", route_after_select,
+        {"gen_copy": "gen_copy", "finish": "finish"},
+    )
     graph.add_conditional_edges(
         "gen_copy", route_after_copy, {"review_copy": "review_copy", "finish": "finish"},
     )

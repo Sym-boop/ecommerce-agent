@@ -3,6 +3,29 @@
 # 动态定价与竞品监控 —— 单 Agent（供 Supervisor 调度）
 # 感知：ERP MCP + CSV；决策：大模型；输出：敌我对比 + 调价建议
 # ============================================
+#
+# ⚠️ 弃用说明（DEPRECATED · 2026-10 起）
+# ---------------------------------------------------------------------------
+# 本模块**当前不在任何调用链上**（全仓 0 处 import），保留原因见下。
+#
+# 【为什么不用了】
+#   项目做过一次范围收敛（见 .trae/documents/ad-generation-refactor-plan.md 的 D1）：
+#   竞价/动态定价与「广告内容生产 → 合规审查 → 多平台投放」是两条不同的业务闭环，
+#   而且耦合很深（牵连 supervisor.py / task_engine.py / celery 定时任务 /
+#   前端 mock 与 format / data/raw/competitors.csv）。
+#   为了让广告主线做深，决策是「**保留代码、摘除编排入口**」。
+#
+# 【如果要重新启用，需要接回这些点】
+#   1. supervisor.py：把 pricing 节点加回子 Agent 调度
+#   2. task_engine.py：恢复定价节点与定价类审批单（原 _make_pricing_approval）
+#   3. celery_app.py：恢复每 15 分钟的定时调价任务（beat schedule）
+#   4. 数据：data/raw/competitors.csv、data/processed/competitors.csv
+#   5. 前端：调价审批卡片与价位展示
+#
+# 【如果确认不再做】
+#   建议直接删除本文件，并同步清理 milvus_cli.py 文档字符串中的提及，
+#   避免后续接手者误以为它是主链路的一部分。
+# ---------------------------------------------------------------------------
 
 from __future__ import annotations
 

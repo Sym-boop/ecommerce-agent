@@ -1,4 +1,23 @@
 <template>
+  <!--
+    ==========================================================================
+    任务拓扑看板（LEGACY · 已从菜单移除）
+
+    状态：路由仍保留（/canvas），但顶部菜单不再展示，页面为「只读视图」。
+    原因：项目做过范围收敛，主链路改成「以商品为入口的固定流水线」
+          （见 backend/app/agent/ad_graph.py 的 LangGraph 编排）。
+          这条「下发运营目标 → Supervisor 动态拆解」的路径退为次要，
+          UI 入口随之移除，避免两套流程并存造成困惑。
+
+    仍在运行时依赖：task/store（listTasks / getTask / retryTask / cancelTask）
+                    → GET /api/v1/tasks、/api/v1/tasks/:id、retry、cancel
+    注意：本页已「不可下发目标」，因此不会调用 POST /api/v1/goals；
+          该端点对应的 supervisor.py 目前只有直接调 API 才会触发。
+
+    若要彻底下线，需同步清理：本文件 + router 中的 /canvas 路由 +
+    App.vue 的菜单项（已移除）+ 后端 task_engine 的 supervisor 分支 + /goals 端点。
+    ==========================================================================
+  -->
   <div class="canvas-page">
     <!-- ===== 顶部工具栏 ===== -->
     <div class="page-toolbar">

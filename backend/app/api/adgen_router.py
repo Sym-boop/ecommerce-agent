@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 import threading
@@ -55,6 +56,15 @@ def ok(data=None) -> dict:
 
 def fail(status: int, msg: str) -> JSONResponse:
     return JSONResponse(status_code=status, content={"code": status, "msg": msg})
+
+
+def _actor() -> str:
+    """当前操作人（由鉴权依赖写入 audit 的线程本地存储）。"""
+    try:
+        from app.common import audit
+        return audit.current_actor().get("username") or ""
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def _new_session() -> dict:
@@ -102,8 +112,15 @@ def _save_upload(image: UploadFile | None) -> Path | None:
 
 @router.post("/copy")
 async def generate_copy_api(payload: dict | None = None):
-    """生成文案；`regenerate=true` 时沿用原商品与关键词，只重出文案。"""
-    body = payload or {}
+    """生成文案（同步）；`regenerate=true` 时沿用原商品与关键词，只重出文案。
+
+    大模型调用通常 5~15 秒，会挂住请求。需要不阻塞时用 `POST /adgen/copy-async`。
+    """
+    return generate_copy_core(payload or {})
+
+
+def generate_copy_core(body: dict):
+    """文案生成核心逻辑（同步与异步端点共用，避免两套实现）。"""
     session_id = str(body.get("session_id") or "").strip()
     regenerate = bool(body.get("regenerate"))
 
@@ -152,10 +169,63 @@ async def generate_copy_api(payload: dict | None = None):
             "video": {},
             "status": "review_required" if ad_graph.is_interrupted(result) else "copy_ready",
         })
+        # 质量评估：客观指标（零成本），供质量看板沉淀趋势
+        try:
+            from app.common import quality_store
+            copy = session.get("copy") or {}
+            review = session.get("review") or {}
+            evaluation = quality_store.record(
+                session_id=session["session_id"],
+                platform=platform,
+                title=copy.get("title", ""),
+                content=copy.get("content", ""),
+                tags=copy.get("tags") or [],
+                sell_points=session["product"].get("sell_points") or [],
+                violations=review.get("violations") or [],
+                source="generation",
+            )
+            session["quality"] = {
+                "score": evaluation.get("score"),
+                "metrics": evaluation.get("metrics"),
+                "eval_id": evaluation.get("id"),
+            }
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("质量评估失败（不影响生成）: %s", exc)
         _persist_sessions()
         snapshot = dict(session)
 
     return ok(snapshot)
+
+
+@router.post("/copy-async")
+async def generate_copy_async_api(payload: dict | None = None):
+    """生成文案（**异步**）：立即返回 job_id，前端轮询 `/api/v1/system/jobs/{id}`。
+
+    用途：批量生成、或前端希望在等待期间保持可交互，避免长请求占住连接。
+    """
+    from app.common import jobs
+
+    body = payload or {}
+    body["_async"] = True
+    job = jobs.submit("adgen.copy", _generate_copy_job, body, actor=_actor())
+    return ok({"job_id": job["job_id"], "status": job["status"],
+               "poll": f"/api/v1/system/jobs/{job['job_id']}",
+               "backend": job.get("backend")})
+
+
+def _generate_copy_job(body: dict):
+    """异步任务体（模块级函数，便于 Celery 序列化）。"""
+    resp = generate_copy_core(body)
+    # 同步端点返回的是 fastapi Response（ok 是 dict / fail 是 JSONResponse）
+    if isinstance(resp, dict):
+        return {"code": 0, "msg": "ok", "data": resp.get("data")}
+    try:
+        payload = json.loads(bytes(resp.body).decode("utf-8"))
+    except Exception:  # noqa: BLE001
+        payload = {"code": resp.status_code, "msg": "生成失败"}
+    if payload.get("code") != 0:
+        raise RuntimeError(payload.get("msg") or "文案生成失败")
+    return payload
 
 
 @router.post("/review/{session_id}")
@@ -208,10 +278,25 @@ def _run_asset(task_id: str, session_id: str, asset_type: str,
     try:
         if asset_type == "image":
             out = ad_graph.gen_image_node(state)
-            task.update(status="succeeded", url=(out.get("image") or {}).get("url"),
-                        error=(out.get("image") or {}).get("error"))
+            image = out.get("image") or {}
+            task.update(status="succeeded", url=image.get("url"),
+                        error=image.get("error"))
+            # 图片一致性校验：客观预检（零成本）总是执行；
+            # 语义校验仅在配置了视觉模型时执行，能力边界写进返回值
+            if image.get("url") and not image.get("error"):
+                try:
+                    from app.common import image_check
+                    copy = session.get("copy") or {}
+                    image["consistency"] = image_check.check_asset(
+                        result_url=image["url"],
+                        title=copy.get("title", ""),
+                        content=copy.get("content", ""),
+                        input_image=session.get("uploaded_image"),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("图片一致性校验失败（不影响生成）: %s", exc)
             with _LOCK:
-                session["image"] = out.get("image") or {}
+                session["image"] = image
                 _persist_sessions()
         else:
             out = ad_graph.gen_video_node(state)
@@ -339,28 +424,37 @@ async def save_to_delivery_api(payload: dict | None = None):
     product_name = product.get("name") or "未命名商品"
     prompt = "；".join(p for p in [product_name, session.get("keyword"), copy.get("title")] if p)
 
+    from app.common import audit, rbac, versions
+
+    actor = _actor()
+    category = str(product.get("category") or "")
+
     ad_ids: list[str] = []
+    deduped: list[str] = []
+
+    def _register(**kwargs) -> None:
+        ad = pipeline.register_ad(
+            prompt=prompt, platform=session.get("platform", ""),
+            actor=actor, category=category, source="ai",
+            session_id=session_id, **kwargs,
+        )
+        ad_ids.append(ad["id"])
+        # 幂等命中：同一份内容重复保存时复用既有物料，不新增
+        if ad.get("deduped"):
+            deduped.append(ad["id"])
+
     # 1) 文案广告
-    ad_ids.append(pipeline.register_ad(
-        ad_type="copy", title=copy.get("title", ""), prompt=prompt,
-        platform=session.get("platform", ""), content=copy.get("content", ""),
-    )["id"])
+    _register(ad_type="copy", title=copy.get("title", ""), content=copy.get("content", ""))
     # 2) 图文广告（如有）
     image_url = (session.get("image") or {}).get("url")
     if image_url:
-        ad_ids.append(pipeline.register_ad(
-            ad_type="image", title=copy.get("title", ""), prompt=prompt,
-            platform=session.get("platform", ""), content=copy.get("content", ""),
-            input_image=session.get("uploaded_image"), result_url=image_url,
-        )["id"])
+        _register(ad_type="image", title=copy.get("title", ""), content=copy.get("content", ""),
+                  input_image=session.get("uploaded_image"), result_url=image_url)
     # 3) 视频广告（如有）
     video_url = (session.get("video") or {}).get("url")
     if video_url:
-        ad_ids.append(pipeline.register_ad(
-            ad_type="video", title=copy.get("title", ""), prompt=prompt,
-            platform=session.get("platform", ""), input_image=session.get("uploaded_image"),
-            result_url=video_url,
-        )["id"])
+        _register(ad_type="video", title=copy.get("title", ""),
+                  input_image=session.get("uploaded_image"), result_url=video_url)
 
     record = history_store.save_record(
         product=product, keyword=session.get("keyword", ""), platform=session.get("platform", ""),
@@ -372,8 +466,14 @@ async def save_to_delivery_api(payload: dict | None = None):
         session["status"] = "saved"
         _persist_sessions()
 
-    return ok({"record": record, "ad_ids": ad_ids,
-               "message": "已进入广告流水线，待审查与审批通过后可在「广告投放」投放"})
+    audit.record("ad.save", target=session_id, target_type="session",
+                 detail={"ad_ids": ad_ids, "deduped": deduped, "record_id": record["id"]})
+
+    message = "已进入广告流水线，待审查与审批通过后可在「广告投放」投放"
+    if deduped:
+        message = f"其中 {len(deduped)} 条与既有物料内容相同，已复用未重复入库；" + message
+    return ok({"record": record, "ad_ids": ad_ids, "deduped_ids": deduped,
+               "message": message})
 
 
 @router.post("/pause")

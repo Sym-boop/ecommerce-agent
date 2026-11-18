@@ -236,7 +236,8 @@ def retrieve_similar_copy(category: str, platform: str, top_k: int = 3) -> List[
         try:
             from app.common import rerank as rerank_mod
 
-            out = rerank_mod.rerank(category, ordered, top_k=top_k)
+            out = rerank_mod.rerank(category, ordered, top_k=top_k,
+                                     prefer_platform=plat)
             return out["docs"]
         except Exception as exc:  # noqa: BLE001
             print(f"[copywriter] 精排异常（保持召回顺序）: {exc}", file=sys.stderr)

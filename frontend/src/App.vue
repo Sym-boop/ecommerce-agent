@@ -68,6 +68,10 @@
           <el-icon><QuestionFilled /></el-icon>
           <span>帮助中心</span>
         </el-menu-item>
+        <el-menu-item index="/system">
+          <el-icon><Monitor /></el-icon>
+          <span>系统中心</span>
+        </el-menu-item>
       </el-menu>
 
       <div class="header-right">

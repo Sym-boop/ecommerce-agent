@@ -424,3 +424,75 @@ export function approveAd(adId, payload) {
 export function rejectAd(adId, payload) {
   return request.post(`/review/reject/${adId}`, payload)
 }
+
+/** 批量审批：{ ids: [...], action: 'approve'|'reject', comment } */
+export function batchReview(payload) {
+  return request.post('/review/batch', payload)
+}
+
+/** 审批 SLA：待办积压 / 超时清单 / 平均等待时长 */
+export function getReviewSla() {
+  return request.get('/review/sla')
+}
+
+/** 热加载违禁词表（需管理员权限） */
+export function reloadBannedWords() {
+  return request.post('/review/banned-words/reload')
+}
+
+// ---------- 系统管理（配置自检 / 指标 / 审计 / 质量 / 版本 / 数据飞轮） ----------
+
+/** 启动配置自检：Key 是否配置、模型名是否有效、词表是否可用 */
+export function getConfigStatus() {
+  return request.get('/system/config-status')
+}
+
+/** 运行指标：调用量 / 失败率 / 降级次数 / P95 耗时 / 成本估算 */
+export function getMetrics() {
+  return request.get('/system/metrics')
+}
+
+/** 操作审计日志（支持按动作/对象/操作人过滤，需管理员权限） */
+export function listAuditLog(params) {
+  return request.get('/system/audit', { params })
+}
+
+/** 审计概览 */
+export function getAuditStats() {
+  return request.get('/system/audit/stats')
+}
+
+/** 质量评估看板：平均分 / 指标通过率 / 分数分布 / 低分样本 */
+export function getQualityDashboard(params) {
+  return request.get('/system/quality', { params })
+}
+
+/** 某条素材的版本链 */
+export function getVersions(adId) {
+  return request.get(`/system/versions/${adId}`)
+}
+
+/** 版本 diff（默认第一版 → 最新版） */
+export function getVersionDiff(adId, params) {
+  return request.get(`/system/versions/${adId}/diff`, { params })
+}
+
+/** 数据飞轮概览：已回流样本 / 待补写数 */
+export function getFlywheel() {
+  return request.get('/system/flywheel')
+}
+
+/** 最近回流的人工认可样本 */
+export function getFlywheelSamples(params) {
+  return request.get('/system/flywheel/samples', { params })
+}
+
+/** 把待入库样本补写进向量库（需管理员权限） */
+export function flushFlywheel() {
+  return request.post('/system/flywheel/flush')
+}
+
+/** 角色权限矩阵 + 当前登录角色 */
+export function getRbac() {
+  return request.get('/system/rbac')
+}

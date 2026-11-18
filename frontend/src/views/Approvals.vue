@@ -205,16 +205,65 @@
         show-icon
         :title="`${pendingList.length} 条广告已通过违禁词与预算审查，等待人工审批`"
       >
-        <div class="review-summary-desc">审批通过后广告进入「广告投放」；驳回则进入已处理并退出流水线。</div>
+        <div class="review-summary-desc">
+          审批通过后广告进入「广告投放」；驳回则进入已处理并退出流水线。
+          <b>职责分离：不能审批自己生成的广告</b>（生成人显示在卡片上）。
+        </div>
+      </el-alert>
+
+      <!-- 批量操作栏 -->
+      <div v-if="pendingList.length" class="batch-bar">
+        <el-checkbox
+          :model-value="allSelected"
+          :indeterminate="someSelected"
+          @change="toggleSelectAll"
+        >
+          全选（已选 {{ selectedIds.length }} / {{ pendingList.length }}）
+        </el-checkbox>
+        <span class="spacer"></span>
+        <span class="kbd-hint">
+          快捷键：<kbd>A</kbd> 全选 · <kbd>Enter</kbd> 通过选中 · <kbd>Backspace</kbd> 驳回选中 · <kbd>R</kbd> 刷新
+        </span>
+        <el-button
+          type="danger" plain size="small"
+          :disabled="!selectedIds.length" :loading="batchActing"
+          @click="openBatchReject"
+        >
+          批量驳回
+        </el-button>
+        <el-button
+          type="success" size="small"
+          :disabled="!selectedIds.length" :loading="batchActing"
+          @click="handleBatchApprove"
+        >
+          批量通过（{{ selectedIds.length }}）
+        </el-button>
+      </div>
+
+      <el-alert
+        v-if="batchResult.skipped.length"
+        type="warning" :closable="false" show-icon class="batch-result"
+        :title="`批量处理完成：成功 ${batchResult.succeeded} 条，跳过 ${batchResult.skipped.length} 条`"
+      >
+        <div class="review-summary-desc">
+          <div v-for="s in batchResult.skipped" :key="s.id">{{ s.id }}：{{ s.reason }}</div>
+        </div>
       </el-alert>
 
       <el-empty v-if="!pendingLoading && pendingList.length === 0" description="暂无待审批广告，完成审查处置后会自动汇聚到这里" />
 
       <el-space v-else direction="vertical" fill :size="14" style="display: flex">
-        <el-card v-for="item in pendingList" :key="item.id" shadow="hover" class="approval-card">
+        <el-card
+          v-for="item in pendingList" :key="item.id" shadow="hover" class="approval-card"
+          :class="{ 'is-selected': selectedIds.includes(item.id) }"
+        >
           <template #header>
             <div class="card-head">
               <div class="card-head-left">
+                <el-checkbox
+                  :model-value="selectedIds.includes(item.id)"
+                  @change="() => toggleSelect(item.id)"
+                />
                 <el-tag :type="AD_TYPE_META[item.type]?.tagType || 'info'" effect="plain">
                   {{ AD_TYPE_META[item.type]?.label || item.type }}
                 </el-tag>
@@ -223,6 +272,7 @@
                 <span class="mono card-sku">{{ item.id }}</span>
               </div>
               <div class="card-head-right">
+                <span v-if="item.generated_by" class="mono card-time">生成人 {{ item.generated_by }}</span>
                 <span class="mono card-time">{{ formatTime(item.created_at) }}</span>
                 <el-tag type="warning" effect="dark">待审批</el-tag>
               </div>
@@ -262,6 +312,7 @@
 
           <template #footer>
             <div class="card-footer">
+              <el-button text size="small" @click="openVersions(item)">版本历史</el-button>
               <span class="spacer"></span>
               <el-button type="danger" plain @click="openReject(item)">驳回</el-button>
               <el-button type="success" :loading="actingId === item.id" @click="handleApprove(item)">通过并进入投放</el-button>
@@ -340,11 +391,69 @@
         <el-button type="danger" :loading="acting" @click="confirmReject">确认驳回</el-button>
       </template>
     </el-dialog>
+
+    <!-- ===== 批量驳回对话框 ===== -->
+    <el-dialog v-model="batchRejectVisible" title="批量驳回" width="460px">
+      <div class="reject-target">
+        <el-tag size="small" effect="plain">已选 {{ selectedIds.length }} 条</el-tag>
+        <span>驳回后这些广告将退出流水线，进入「已处理」</span>
+      </div>
+      <el-input
+        v-model="batchComment"
+        type="textarea"
+        :rows="4"
+        maxlength="200"
+        show-word-limit
+        placeholder="请填写批量驳回原因（必填，会写入每条广告的审批意见）"
+      />
+      <template #footer>
+        <el-button @click="batchRejectVisible = false">取消</el-button>
+        <el-button type="danger" :loading="batchActing" @click="confirmBatchReject">确认批量驳回</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- ===== 版本历史对话框 ===== -->
+    <el-dialog v-model="versionsVisible" title="素材版本历史" width="720px">
+      <div class="reject-target">
+        <el-tag size="small" effect="plain">{{ versionTarget?.id }}</el-tag>
+        <span>{{ versionTarget?.title || '（无标题）' }}</span>
+      </div>
+
+      <el-empty v-if="!versionChain.length" description="该素材暂无版本记录" />
+
+      <el-timeline v-else>
+        <el-timeline-item
+          v-for="v in versionChain"
+          :key="v.version"
+          :timestamp="`${v.at} · ${v.actor || '未知'} · ${v.note || '—'}`"
+          :type="v.version === versionChain.length ? 'primary' : ''"
+        >
+          <div class="ver-title">{{ v.title || '(无标题)' }}</div>
+          <div class="ver-content">{{ v.content }}</div>
+        </el-timeline-item>
+      </el-timeline>
+
+      <template v-if="versionDiff?.available">
+        <el-divider content-position="left">
+          差异 v{{ versionDiff.from?.version }} → v{{ versionDiff.to?.version }}
+          （+{{ versionDiff.added }} / -{{ versionDiff.removed }}）
+        </el-divider>
+        <pre class="diff-view"><code><span
+          v-for="(line, i) in versionDiff.lines" :key="i"
+          :class="diffLineClass(line)"
+        >{{ line }}
+</span></code></pre>
+      </template>
+
+      <template #footer>
+        <el-button @click="versionsVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import {
@@ -358,6 +467,9 @@ import {
   clearBudgetReview,
   approveAd,
   rejectAd,
+  batchReview,
+  getVersions,
+  getVersionDiff,
 } from '@/api'
 import { useAppStore } from '@/stores/app'
 import { formatTime, mediaUrl, PLATFORM_META, AD_TYPE_META, STAGE_META } from '@/utils/format'
@@ -615,15 +727,219 @@ async function confirmReject() {
   }
 }
 
+// ---------- 批量审批 ----------
+const selectedIds = ref([])
+const batchActing = ref(false)
+const batchRejectVisible = ref(false)
+const batchComment = ref('')
+const batchResult = reactive({ succeeded: 0, skipped: [] })
+
+const allSelected = computed(
+  () => pendingList.value.length > 0 && selectedIds.value.length === pendingList.value.length,
+)
+const someSelected = computed(
+  () => selectedIds.value.length > 0 && selectedIds.value.length < pendingList.value.length,
+)
+
+function toggleSelect(id) {
+  const idx = selectedIds.value.indexOf(id)
+  if (idx >= 0) selectedIds.value.splice(idx, 1)
+  else selectedIds.value.push(id)
+}
+
+function toggleSelectAll(checked) {
+  selectedIds.value = checked ? pendingList.value.map((i) => i.id) : []
+}
+
+async function runBatch(action, comment) {
+  if (!selectedIds.value.length) return
+  batchActing.value = true
+  batchResult.skipped = []
+  try {
+    const res = await batchReview({
+      ids: [...selectedIds.value],
+      action,
+      comment: comment || '',
+    })
+    batchResult.succeeded = res.succeeded_count || 0
+    batchResult.skipped = res.skipped || []
+    if (batchResult.skipped.length) {
+      ElMessage.warning(`成功 ${batchResult.succeeded} 条，跳过 ${batchResult.skipped.length} 条（详见提示）`)
+    } else {
+      ElMessage.success(`批量${action === 'approve' ? '通过' : '驳回'}成功 ${batchResult.succeeded} 条`)
+    }
+    selectedIds.value = []
+    await reloadAll()
+  } catch (e) {
+    // 403 时给出明确的权限/职责分离提示
+    const detail = e?.response?.data?.detail || e?.response?.data?.msg
+    ElMessage.error(detail || e?.message || '批量操作失败')
+  } finally {
+    batchActing.value = false
+  }
+}
+
+async function handleBatchApprove() {
+  try {
+    await ElMessageBox.confirm(
+      `确认批量通过选中的 ${selectedIds.value.length} 条广告？通过后将进入「广告投放」。`,
+      '批量审批确认',
+      { type: 'warning', confirmButtonText: '确认通过', cancelButtonText: '再想想' },
+    )
+  } catch {
+    return
+  }
+  await runBatch('approve', '批量通过')
+}
+
+function openBatchReject() {
+  batchComment.value = ''
+  batchRejectVisible.value = true
+}
+
+async function confirmBatchReject() {
+  if (!batchComment.value.trim()) {
+    ElMessage.warning('请先填写批量驳回原因')
+    return
+  }
+  batchRejectVisible.value = false
+  await runBatch('reject', batchComment.value.trim())
+}
+
+// ---------- 版本历史 ----------
+const versionsVisible = ref(false)
+const versionTarget = ref(null)
+const versionChain = ref([])
+const versionDiff = ref(null)
+
+const diffLineClass = (line) => {
+  if (line.startsWith('+++') || line.startsWith('---')) return 'diff-meta'
+  if (line.startsWith('@@')) return 'diff-hunk'
+  if (line.startsWith('+')) return 'diff-add'
+  if (line.startsWith('-')) return 'diff-del'
+  return ''
+}
+
+async function openVersions(item) {
+  versionTarget.value = item
+  versionChain.value = []
+  versionDiff.value = null
+  versionsVisible.value = true
+  try {
+    const res = await getVersions(item.id)
+    versionChain.value = res.versions || []
+    versionDiff.value = await getVersionDiff(item.id).catch(() => null)
+  } catch {
+    versionChain.value = []
+  }
+}
+
+// ---------- 键盘快捷键（高频审批操作） ----------
+function onKeydown(e) {
+  // 输入框/对话框内不抢键
+  const tag = (e.target?.tagName || '').toLowerCase()
+  if (tag === 'input' || tag === 'textarea' || e.target?.isContentEditable) return
+  if (rejectDialogVisible.value || batchRejectVisible.value || versionsVisible.value
+      || budgetDialogVisible.value) return
+  if (activeTab.value !== 'pending') return
+
+  if (e.key === 'a' || e.key === 'A') {
+    e.preventDefault()
+    toggleSelectAll(!allSelected.value)
+  } else if (e.key === 'Enter' && selectedIds.value.length) {
+    e.preventDefault()
+    handleBatchApprove()
+  } else if ((e.key === 'Backspace' || e.key === 'Delete') && selectedIds.value.length) {
+    e.preventDefault()
+    openBatchReject()
+  } else if (e.key === 'r' || e.key === 'R') {
+    e.preventDefault()
+    reloadAll()
+  }
+}
+
 onMounted(async () => {
   await fetchReviewConfig()
   await reloadAll()
+  window.addEventListener('keydown', onKeydown)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown)
 })
 </script>
 
 <style scoped>
 .tab-badge {
   margin-left: 6px;
+}
+
+/* ===== 批量操作栏 ===== */
+.batch-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  background: #fff;
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+}
+.batch-bar .spacer { flex: 1; }
+.kbd-hint { font-size: 12px; color: #909399; }
+.kbd-hint kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  margin: 0 2px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: #4b5563;
+  background: #f2f3f5;
+  border: 1px solid #dcdfe6;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+}
+.batch-result { margin-bottom: 12px; }
+
+.approval-card.is-selected { border-color: #409eff; box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.15); }
+
+/* ===== 版本历史 ===== */
+.ver-title { font-weight: 600; color: #1d2b4f; margin-bottom: 4px; }
+.ver-content {
+  font-size: 13px;
+  color: #606266;
+  white-space: pre-wrap;
+  max-height: 140px;
+  overflow: auto;
+  background: #f7f9fc;
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+.diff-view {
+  background: #1d2b4f;
+  color: #d7e0f2;
+  padding: 14px 16px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  overflow-x: auto;
+  margin: 0;
+  max-height: 340px;
+}
+.diff-add { color: #85ce61; background: rgba(103, 194, 58, 0.14); display: block; }
+.diff-del { color: #f89898; background: rgba(245, 108, 108, 0.14); display: block; }
+.diff-hunk { color: #79bbff; display: block; }
+.diff-meta { color: #a9b8d4; display: block; }
+
+/* 移动端适配：审批卡片在窄屏下堆叠，操作按钮加大便于点按 */
+@media (max-width: 768px) {
+  .batch-bar { flex-direction: column; align-items: stretch; }
+  .kbd-hint { display: none; }
+  .card-head { flex-direction: column; align-items: flex-start; gap: 8px; }
+  .card-footer { flex-wrap: wrap; gap: 8px; }
+  .card-footer :deep(.el-button) { flex: 1; min-height: 40px; }
+  .page-toolbar { flex-wrap: wrap; gap: 8px; }
 }
 
 .review-config-hint {

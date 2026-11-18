@@ -43,6 +43,14 @@ _ENABLED = os.getenv("RAG_RERANK", "1").strip() not in ("0", "false", "False", "
 # 单次精排最多处理多少条候选（防止候选过多时 CPU 推理拖慢请求）
 _MAX_CANDIDATES = int(os.getenv("RERANK_MAX_CANDIDATES", "20"))
 
+# 同平台加成：精排分之外再给同平台候选一个小幅加分。
+#
+# 为什么需要：调用方先做了「同平台优先」分区（same + other），但如果精排
+# 直接按 rerank_score 重排，分区顺序会被完全覆盖——业务上想要的「平台风格偏好」
+# 就丢了。加一个**小于分数差量级**的加成，让两个信号共存：
+# 平台偏好只影响接近的分数，不推翻明显的相关性差异。
+_PLATFORM_BONUS = float(os.getenv("RERANK_PLATFORM_BONUS", "0.05"))
+
 _model: Optional[Any] = None
 _load_tried = False
 _load_error: Optional[str] = None
@@ -105,6 +113,7 @@ def rerank(
     docs: list[dict[str, Any]],
     top_k: int = 3,
     text_field: str = "text",
+    prefer_platform: str = "",
 ) -> dict[str, Any]:
     """对候选精排并截断。
 
@@ -132,13 +141,22 @@ def rerank(
         return {"docs": docs[:top_k], "reranked": False,
                 "reason": f"推理失败: {type(exc).__name__}"}
 
+    plat = str(prefer_platform or "").strip()
     scored = []
     for doc, sc in zip(candidates, scores):
         item = dict(doc)
-        item["rerank_score"] = round(float(sc), 6)
+        base = round(float(sc), 6)
+        item["rerank_score"] = base
+        # 同平台加成：让「平台风格偏好」与「语义相关性」共存，
+        # 而不是被精排完全覆盖
+        bonus = _PLATFORM_BONUS if plat and str(doc.get("platform", "")).strip() == plat else 0.0
+        item["final_score"] = round(base + bonus, 6)
+        item["platform_bonus"] = bonus
         scored.append(item)
 
-    # 稳定排序：同分时保持召回顺序（sorted 是稳定的）
-    scored.sort(key=lambda d: d["rerank_score"], reverse=True)
+    # 先按总分降序；总分相同时保持召回顺序（sorted 是稳定的），
+    # 也就是「同平台优先」分区的结果作为 tie-break 保留下来
+    scored.sort(key=lambda d: d["final_score"], reverse=True)
     return {"docs": scored[:top_k], "reranked": True,
-            "reason": f"精排 {len(candidates)} 条 → 取前 {min(top_k, len(scored))}"}
+            "reason": (f"精排 {len(candidates)} 条（同平台加成 {_PLATFORM_BONUS}）"
+                       f" → 取前 {min(top_k, len(scored))}")}

@@ -1,6 +1,11 @@
 """
 Milvus 客户端封装：连接、插入、检索、删除
-供 copywriter.py / pricing.py 等 Agent 共同调用
+
+调用方（当前真实链路）：
+  - copywriter.py  相似爆款文案召回（RAG）
+  - pipeline.py    违禁词检测（check_banned_words）
+  - main.py /health 连通性探测
+注：pricing.py 虽也设计为调用方，但该 Agent 已弃用（见其文件头说明），不再计入。
 
 统一 schema（单一事实来源，init_milvus.py / load_knowledge.py 共用）：
   - collection: knowledge_base
@@ -12,10 +17,13 @@ Milvus 客户端封装：连接、插入、检索、删除
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from pathlib import Path
 from typing import Any, Optional
+
+logger = logging.getLogger("uvicorn.error")
 
 # 项目根目录
 _ROOT = Path(__file__).resolve().parents[3]
@@ -80,9 +88,69 @@ class MilvusClientWrapper:
         self._token = token or os.getenv("MILVUS_TOKEN", "")
         self._dim = dimension
         self._client: Optional[MilvusClient] = None
-        self._embedding_fn = self._load_embedding_fn()
+        # embedding 惰性加载：构造时不加载模型（见 embed()）。
+        # 走 TF-IDF 降级通道时不需要 embedding，避免无谓的初始化开销。
+        self._embedding_fn = None
         self._memory_docs: list[dict[str, Any]] = []
         self._memory_available = False
+        # 熔断器：Milvus 不可达时，冷却期内直接走内存降级，不再反复重连。
+        # 否则每次 search 都要等一次连接超时（实测 180 次查询跑了 15 分钟）。
+        self._breaker_until: float = 0.0
+        self._breaker_hits: int = 0
+
+    # ------------------------------------------------------------------
+    # 熔断器
+    # ------------------------------------------------------------------
+    def _breaker_open(self) -> bool:
+        import time as _time
+        return _time.monotonic() < self._breaker_until
+
+    def _trip_breaker(self, exc: Exception) -> None:
+        import time as _time
+        cooldown = float(os.getenv("MILVUS_BREAKER_SECONDS", "60"))
+        self._breaker_until = _time.monotonic() + cooldown
+        self._breaker_hits += 1
+        logger.warning(
+            "Milvus 熔断 %ss（第 %d 次）：%s；期间直接使用内存降级通道",
+            int(cooldown), self._breaker_hits, exc,
+        )
+        # 丢掉已坏的客户端，恢复后重新建连
+        if self._client is not None:
+            try:
+                self._client.close()
+            except Exception:  # noqa: BLE001
+                pass
+            self._client = None
+
+    def _reset_breaker(self) -> None:
+        if self._breaker_until:
+            logger.info("Milvus 已恢复，解除熔断")
+        self._breaker_until = 0.0
+
+    def breaker_state(self) -> dict[str, Any]:
+        import time as _time
+        return {
+            "open": self._breaker_open(),
+            "remaining_seconds": max(0.0, round(self._breaker_until - _time.monotonic(), 1)),
+            "trips": self._breaker_hits,
+        }
+
+    def ping(self) -> bool:
+        """探测连通性。**必须走熔断器**，否则健康检查会在依赖挂掉时阻塞。
+
+        实测问题：`/health` 原来直接调 `wrapper.client.list_collections()`，
+        绕过了超时与熔断。Milvus 不可达时每次要等约 30 秒，
+        压测中 20 并发下 /health 全部超时（错误率 97.5%）。
+        """
+        if self._breaker_open():
+            return False
+        try:
+            self.client.list_collections()
+            self._reset_breaker()
+            return True
+        except Exception as exc:  # noqa: BLE001
+            self._trip_breaker(exc)
+            return False
 
     # ------------------------------------------------------------------
     # 属性访问
@@ -172,6 +240,11 @@ class MilvusClientWrapper:
         return None
 
     def embed(self, texts: list[str]) -> list[list[float]]:
+        # 惰性加载：embedding 模型（如 bge-m3）初始化很慢，首次加载在离线环境
+        # 可能因为联网重试花掉几分钟。只有在**真的要用向量**时才加载——
+        # 走 TF-IDF 降级通道的路径完全不需要它。
+        if self._embedding_fn is None:
+            self._embedding_fn = self._load_embedding_fn()
         if self._embedding_fn is None:
             raise RuntimeError(
                 "未配置可用 embedding 函数，请在 .env 中设置 OPENAI_API_KEY，"
@@ -232,6 +305,9 @@ class MilvusClientWrapper:
         )
 
     def has_collection(self, collection_name: Optional[str] = None) -> bool:
+        # 熔断期内不去探 Milvus（否则每次健康检查都要等一次连接超时）
+        if self._breaker_open():
+            return False
         try:
             return bool(self.client.has_collection(collection_name or self.COLLECTION))
         except Exception:  # noqa: BLE001
@@ -240,6 +316,8 @@ class MilvusClientWrapper:
     def count(self, collection_name: Optional[str] = None) -> int:
         """返回集合行数（Milvus 不可用时返回内存条数）。"""
         name = collection_name or self.COLLECTION
+        if self._breaker_open():
+            return len(self._memory_docs)
         try:
             stats = self.client.get_collection_stats(name)
             return int(stats.get("row_count", 0))
@@ -270,16 +348,160 @@ class MilvusClientWrapper:
 
     def describe(self) -> dict[str, Any]:
         """集合运行时信息，供脚本 / 健康检查输出。"""
+        breaker = self.breaker_state()
+        has = self.has_collection() if not breaker["open"] else False
         return {
             "uri": self._uri,
             "collection": self.COLLECTION,
             "dimension": self._dim,
             "index_type": self.INDEX_TYPE,
             "metric_type": self.METRIC_TYPE,
-            "exists": self.has_collection(),
-            "row_count": self.count() if self.has_collection() else 0,
-            "embedding_ready": self._embedding_fn is not None,
+            "exists": has,
+            "row_count": self.count() if has else len(self._memory_docs),
+            "channel": "memory-fallback" if breaker["open"] else "milvus",
+            "breaker": breaker,
+            # 惰性加载：None 表示"还没用过"，不代表不可用
+            "embedding_loaded": self._embedding_fn is not None,
         }
+
+    # ------------------------------------------------------------------
+    # 按给定向量读写（图片等非文本模态用）
+    # ------------------------------------------------------------------
+    def insert_vectors(
+        self,
+        items: list[dict[str, Any]],
+        collection_name: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """插入**已算好的向量**（不做 embedding）。
+
+        每项需包含 `_vector`（定长 float 列表），其余字段同 `insert_data`。
+        图片这类非文本模态没有「文本 embedding」可算，只能自带向量。
+        """
+        if not items:
+            return {"insert_count": 0, "collection": self.COLLECTION, "mode": "empty"}
+
+        name = collection_name or self.COLLECTION
+        for it in items:
+            vec = it.get("_vector")
+            if not isinstance(vec, (list, tuple)) or len(vec) != self._dim:
+                raise ValueError(
+                    f"向量维度不符：期望 {self._dim}，收到 "
+                    f"{len(vec) if isinstance(vec, (list, tuple)) else type(vec).__name__}"
+                )
+
+        if self._breaker_open():
+            return self._insert_memory(items)
+
+        try:
+            self.ensure_collection(name)
+            payload: list[dict[str, Any]] = []
+            for item in items:
+                meta = {k: v for k, v in item.items()
+                        if k not in self._RESERVED and k != "_vector"}
+                payload.append({
+                    self.VECTOR_FIELD: [float(x) for x in item["_vector"]],
+                    self.TEXT_FIELD: str(item.get(self.TEXT_FIELD, "")),
+                    self.PLATFORM_FIELD: str(item.get(self.PLATFORM_FIELD, "")),
+                    self.CATEGORY_FIELD: str(item.get(self.CATEGORY_FIELD, "")),
+                    self.TITLE_FIELD: str(item.get(self.TITLE_FIELD, "")),
+                    self.META_FIELD: meta,
+                })
+            res = self.client.insert(collection_name=name, data=payload)
+            self._reset_breaker()
+            return {"insert_count": res.get("insert_count", 0), "collection": name, "mode": "milvus"}
+        except Exception as exc:  # noqa: BLE001
+            self._trip_breaker(exc)
+            return self._insert_memory(items)
+
+    def search_vector(
+        self,
+        vector: list[float],
+        top_k: int = 5,
+        collection_name: Optional[str] = None,
+        filters: Optional[dict[str, Any]] = None,
+    ) -> list[dict[str, Any]]:
+        """按给定向量检索 Top-K（图片相似检索用）。"""
+        name = collection_name or self.COLLECTION
+        if len(vector) != self._dim:
+            raise ValueError(f"查询向量维度不符：期望 {self._dim}，收到 {len(vector)}")
+
+        if self._breaker_open():
+            return self._search_memory_vector(vector, top_k, filters)
+
+        try:
+            if not self.client.has_collection(name):
+                raise RuntimeError("collection 不存在")
+            expr = ""
+            if filters:
+                conds = []
+                for k, v in filters.items():
+                    if isinstance(v, list):
+                        conds.append(f'{k} in {json.dumps(v)}')
+                    else:
+                        conds.append(f'{k} == "{v}"')
+                expr = " and ".join(conds)
+            search_params = {"metric_type": "COSINE", "params": {"nprobe": 16}}
+            results = self.client.search(
+                collection_name=name,
+                data=[[float(x) for x in vector]],
+                limit=top_k,
+                search_params=search_params,
+                filter=expr,
+                output_fields=[self.TEXT_FIELD, self.META_FIELD,
+                               self.PLATFORM_FIELD, self.CATEGORY_FIELD, self.TITLE_FIELD],
+                timeout=float(os.getenv("MILVUS_TIMEOUT", "5")),
+            )
+            docs: list[dict[str, Any]] = []
+            for hits in results:
+                for hit in hits:
+                    entity = hit["entity"]
+                    meta = entity.get(self.META_FIELD) or {}
+                    docs.append({
+                        "id": hit["id"],
+                        "score": hit["distance"],
+                        self.TEXT_FIELD: entity.get(self.TEXT_FIELD, ""),
+                        self.PLATFORM_FIELD: entity.get(self.PLATFORM_FIELD, ""),
+                        self.CATEGORY_FIELD: entity.get(self.CATEGORY_FIELD, ""),
+                        self.TITLE_FIELD: entity.get(self.TITLE_FIELD, ""),
+                        **meta,
+                    })
+            self._reset_breaker()
+            return docs
+        except Exception as exc:  # noqa: BLE001
+            self._trip_breaker(exc)
+            return self._search_memory_vector(vector, top_k, filters)
+
+    def _search_memory_vector(
+        self,
+        vector: list[float],
+        top_k: int,
+        filters: Optional[dict[str, Any]] = None,
+    ) -> list[dict[str, Any]]:
+        """内存降级：对带 `_vector` 的文档算余弦相似度。"""
+        import math
+
+        docs = [d for d in self._memory_docs if d.get("_vector")]
+        if filters:
+            filtered = []
+            for d in docs:
+                if all(str(d.get(k, "")) == str(v) for k, v in filters.items()
+                       if not isinstance(v, list)):
+                    filtered.append(d)
+            docs = filtered or docs
+        if not docs:
+            return []
+
+        qn = math.sqrt(sum(x * x for x in vector)) or 1.0
+        scored = []
+        for d in docs:
+            v = d["_vector"]
+            if len(v) != len(vector):
+                continue
+            dot = sum(a * b for a, b in zip(vector, v))
+            dn = math.sqrt(sum(x * x for x in v)) or 1.0
+            scored.append((dot / (qn * dn), d))
+        scored.sort(key=lambda x: -x[0])
+        return [{**d, "score": round(s, 6)} for s, d in scored[:top_k]]
 
     # ------------------------------------------------------------------
     # 插入
@@ -301,6 +523,10 @@ class MilvusClientWrapper:
 
         name = collection_name or self.COLLECTION
 
+        # 熔断期内直接走内存，避免每次写入都等一次连接超时
+        if self._breaker_open():
+            return self._insert_memory(data)
+
         # 尝试 Milvus；连接失败则降级到内存模式
         try:
             self.ensure_collection(name)
@@ -320,9 +546,10 @@ class MilvusClientWrapper:
                 })
 
             res = self.client.insert(collection_name=name, data=payload)
+            self._reset_breaker()
             return {"insert_count": res.get("insert_count", 0), "collection": name, "mode": "milvus"}
         except Exception as exc:
-            print(f"[milvus_cli] Milvus 写入失败（{exc}），降级到内存模式", file=sys.stderr)
+            self._trip_breaker(exc)
             return self._insert_memory(data)
 
     def _insert_memory(self, data: list[dict[str, Any]]) -> dict[str, Any]:
@@ -345,6 +572,10 @@ class MilvusClientWrapper:
         返回: [{"id": int, "text": str, "platform": str, "category": str, "score": float, ...}]
         """
         name = collection_name or self.COLLECTION
+
+        # 熔断期内直接走内存检索：避免每次查询都等一次连接超时
+        if self._breaker_open():
+            return self._search_memory(query_text, top_k=top_k, filters=filters)
 
         # 先尝试 Milvus 真实检索
         try:
@@ -390,10 +621,47 @@ class MilvusClientWrapper:
                         **meta,
                     }
                     docs.append(doc)
+            self._reset_breaker()
             return docs
         except Exception as exc:
-            print(f"[milvus_cli] Milvus 检索失败（{exc}），降级到内存模式", file=sys.stderr)
+            self._trip_breaker(exc)
             return self._search_memory(query_text, top_k=top_k, filters=filters)
+
+    def seed_memory_from_disk(self) -> int:
+        """把本地语料灌进内存，供降级检索使用，返回载入条数。
+
+        **为什么需要这个**：降级检索用的是 `self._memory_docs`，而它只在
+        「本进程内调用过 insert_data」时才会有数据。应用启动后若没人写过，
+        这一层就是空的 —— 一旦 Milvus 不可达，降级路径直接返回空参考，
+        「本地 TF-IDF 降级」名不副实。
+
+        实测发现这个问题后补上：首次走降级时从 processed 语料惰性载入。
+        """
+        if self._memory_docs:
+            return 0
+        import json as _json
+
+        candidates = [
+            _ROOT / "data" / "processed" / "copy_processed.json",
+            _ROOT / "backend" / "data" / "processed" / "copy_processed.json",
+        ]
+        path = next((p for p in candidates if p.exists()), None)
+        if path is None:
+            logger.warning("降级检索：未找到本地语料文件，内存通道为空")
+            return 0
+        try:
+            rows = _json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("降级检索：本地语料读取失败（%s）", exc)
+            return 0
+        added = 0
+        for r in rows if isinstance(rows, list) else []:
+            if isinstance(r, dict) and r.get(self.TEXT_FIELD):
+                self._memory_docs.append(dict(r))
+                added += 1
+        if added:
+            logger.info("降级检索：已从 %s 载入 %d 条语料到内存", path.name, added)
+        return added
 
     def _search_memory(
         self,
@@ -402,6 +670,9 @@ class MilvusClientWrapper:
         filters: Optional[dict[str, Any]] = None,
     ) -> list[dict[str, Any]]:
         """内存 fallback 检索：TF-IDF + cosine similarity。"""
+        # 首次降级时惰性载入本地语料，否则这一层是空的
+        if not self._memory_docs:
+            self.seed_memory_from_disk()
         if not self._memory_docs:
             return []
 
@@ -443,13 +714,19 @@ class MilvusClientWrapper:
                 key=lambda x: sims[x[0]],
                 reverse=True,
             )
+            # 相似度阈值过滤：不足 top_k 时**不能拿无关文档补位**。
+            # 实测踩过：查「蓝牙耳机」会把「保温杯」以 score=0.0 塞进参考结果，
+            # 这类无关参考会污染 Prompt，反而拉低生成质量。
+            # 宁可只召回 1 条相关的，也不要 3 条里混 2 条无关的。
+            min_score = float(os.getenv("RETRIEVAL_MIN_SCORE", "0.05"))
             return [
                 {**doc, "score": float(sims[i])}
                 for i, doc in ranked[:top_k]
+                if float(sims[i]) > min_score
             ]
         except Exception:
-            # 最终兜底：返回前 top_k 条
-            return [{"score": 0.0, **doc} for doc in docs[:top_k]]
+            # 打分失败时返回空列表：不拿无关文档凑数，上游会降级为「暂无参考」
+            return []
 
     # ------------------------------------------------------------------
     # 删除
@@ -547,24 +824,17 @@ def close_client() -> None:
 
 
 def check_banned_words(text: str) -> list[dict]:
-    """违禁词扫描（供 task_engine 的 _safe_check_banned 调用）。
+    """违禁词扫描（兼容旧入口，实现见 app.common.banned_words）。
 
-    从本地文件 data/raw/forbidden_words.txt 加载，命中即返回。
+    历史实现是纯子串匹配（`word in text`），有两个已修缺陷：
+      - 单字词误报：「最近」「最后」会被词表里的「最」命中；
+      - 冗余命中：「最」⊂「最好」，同一条文案重复报多条。
+
+    现改为分词 + 词边界 + 最长优先去重，并回填替换建议。
     """
-    fp = _ROOT / "data" / "raw" / "forbidden_words.txt"
-    if not fp.exists():
-        return []
-    hits: list[dict] = []
-    with fp.open("r", encoding="utf-8") as f:
-        for line in f:
-            word = line.strip()
-            if word and word in text:
-                hits.append({
-                    "word": word,
-                    "category": "违禁词",
-                    "replacement": "",
-                })
-    return hits
+    from app.common.banned_words import check
+
+    return check(text)
 
 
 
