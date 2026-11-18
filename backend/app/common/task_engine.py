@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import itertools
+import logging
 import threading
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
@@ -57,6 +58,8 @@ class EngineError(Exception):
 # 内存存储
 # ---------------------------------------------------------------------------
 
+logger = logging.getLogger("uvicorn.error")
+
 TASKS: dict[str, dict] = {}
 APPROVALS: dict[str, dict] = {}
 
@@ -64,6 +67,62 @@ _waiters: dict[str, asyncio.Future] = {}   # approval_id -> Future('approved'|'r
 _lock = threading.Lock()
 _broadcaster: Callable[[str, Any], Awaitable[None]] | None = None
 _SEQ = itertools.count(1)
+
+# ---- 审批单持久化 ----
+#
+# 原来 APPROVALS 是纯进程内存：服务一重启，所有待审批单直接消失——
+# 审批人打开列表是空的，点通过返回 404。而审批恰恰是这条链路上
+# **唯一需要跨小时等待**的状态，最不能丢。
+_APPROVALS_DOC = "approvals.json"
+_APPROVALS_LOADED = False
+
+
+def _persist_approvals() -> None:
+    """把审批单全量落盘（后端负责原子性）。"""
+    from app.common import json_store
+
+    try:
+        with _lock:
+            snapshot = {k: copy.deepcopy(v) for k, v in APPROVALS.items()}
+        json_store.write_json(_APPROVALS_DOC, snapshot)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("审批单落盘失败（不影响本次操作）: %s", exc)
+
+
+def load_approvals(force: bool = False) -> dict:
+    """从磁盘恢复审批单；重启前处于 pending 的标为 orphaned。
+
+    为什么标 orphaned 而不是保留 pending：
+    等待它的协程已随进程消失，这张单子**永远不可能再被执行完**。
+    保留 pending 会让审批人对着一张点不动的单子；直接丢弃又会丢掉
+    「当时有一批素材在等审批」这个事实。所以标 orphaned 并写明原因，
+    审批操作时返回明确的 409，而不是 404 或静默失败。
+    """
+    global _APPROVALS_LOADED
+    if _APPROVALS_LOADED and not force:
+        return {"loaded": len(APPROVALS), "orphaned": 0}
+
+    from app.common import json_store
+
+    data = json_store.read_dict(_APPROVALS_DOC, {})
+    orphaned = 0
+    with _lock:
+        APPROVALS.clear()
+        for aid, item in (data or {}).items():
+            if not isinstance(item, dict):
+                continue
+            if item.get("status") == "pending":
+                item["status"] = "orphaned"
+                item["orphaned_at"] = _now_iso()
+                item["orphan_reason"] = "服务重启，等待执行的任务已中断，需重新下发目标"
+                orphaned += 1
+            APPROVALS[aid] = item
+    _APPROVALS_LOADED = True
+    if orphaned:
+        logger.warning("恢复审批单：%d 张待审批单因服务重启无法继续执行，已标记 orphaned", orphaned)
+        _persist_approvals()
+    return {"loaded": len(APPROVALS), "orphaned": orphaned}
+
 
 
 def set_broadcaster(fn: Callable[[str, Any], Awaitable[None]]) -> None:
@@ -269,6 +328,7 @@ async def _run_copy_node(task: dict) -> list[str]:
     approval = _make_copy_approval(task, title, content, violations)
     with _lock:
         APPROVALS[approval["id"]] = approval
+    _persist_approvals()
     await _emit("approval:created", approval)
     _patch_node(task, "n-copy", status="success", finished_at=_now_iso(),
                 output={"platforms": 3, "violations_found": len(violations), "approval_id": approval["id"]})
@@ -302,6 +362,7 @@ async def _run_ads_node(task: dict) -> list[str]:
     with _lock:
         APPROVALS[approval["id"]] = approval
         register_waiter(approval["id"])
+    _persist_approvals()
     await _emit("approval:created", approval)
     _patch_node(task, "n-ads", status="success", finished_at=_now_iso(),
                 output={"blocked": True, "reason": "超预算阈值", "approval_id": approval["id"]})
@@ -416,6 +477,7 @@ async def run_lifecycle(task_id: str) -> None:
             with _lock:
                 APPROVALS[approval["id"]] = approval
                 register_waiter(approval["id"])
+            _persist_approvals()
             await _emit("approval:created", approval)
             approval_ids.append(approval["id"])
 
@@ -443,6 +505,9 @@ async def run_lifecycle(task_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 def create_task(payload: dict) -> dict:
+    # 先恢复历史审批单：否则首次 _persist_approvals() 只用新单覆盖磁盘，
+    # 把重启前恢复出来的记录全冲掉
+    load_approvals()
     goal = str(payload.get("goal") or "").strip()
     if not goal:
         raise EngineError(400, "goal 不能为空")
@@ -531,11 +596,14 @@ async def retry_task(task_id: str) -> dict:
 
 def list_approvals(status: str | None = None, approval_type: str | None = None,
                    start_time: str | None = None, end_time: str | None = None) -> list[dict]:
+    load_approvals()
     items = list(APPROVALS.values())
     if status == "pending":
         items = [a for a in items if a["status"] == "pending"]
     elif status == "processed":
-        items = [a for a in items if a["status"] != "pending"]
+        items = [a for a in items if a["status"] in ("approved", "rejected")]
+    elif status == "orphaned":
+        items = [a for a in items if a["status"] == "orphaned"]
     if approval_type:
         items = [a for a in items if a["type"] == approval_type]
     if start_time:
@@ -546,6 +614,7 @@ def list_approvals(status: str | None = None, approval_type: str | None = None,
 
 
 def get_approval(approval_id: str) -> dict:
+    load_approvals()
     approval = APPROVALS.get(approval_id)
     if approval is None:
         raise EngineError(404, "审批单不存在")
@@ -556,6 +625,11 @@ async def resolve_approval(approval_id: str, action: str, comment: str = "",
                            edited_content: str | None = None) -> dict:
     """审批通过/驳回。action ∈ approve | reject。"""
     approval = get_approval(approval_id)
+    if approval["status"] == "orphaned":
+        raise EngineError(
+            409,
+            "该审批单所属任务已随服务重启中断，无法恢复执行；请重新下发目标",
+        )
     if approval["status"] != "pending":
         raise EngineError(409, "该审批单已处理，请勿重复操作")
     if action == "reject" and not (comment or "").strip():
@@ -572,6 +646,7 @@ async def resolve_approval(approval_id: str, action: str, comment: str = "",
             "content": edited_content, "editor": CURRENT_OPERATOR, "created_at": _now_iso(),
         })
 
+    _persist_approvals()
     waiter = _waiters.pop(approval_id, None)
     if waiter is not None and not waiter.done():
         waiter.set_result(approval["status"])
@@ -589,6 +664,7 @@ async def save_copy_draft(approval_id: str, content: str) -> dict:
         "version": len(approval["versions"]) + 1,
         "content": content, "editor": CURRENT_OPERATOR, "created_at": _now_iso(),
     })
+    _persist_approvals()
     await _emit("approval:updated", approval)
     return {"version": len(approval["versions"])}
 

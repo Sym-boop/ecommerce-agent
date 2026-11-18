@@ -1,0 +1,17 @@
+# 可选：本地 ML 依赖（含 torch，1GB+）
+#
+# **默认不装**。部署形态下 Milvus 不可达、精排模型文件也不随镜像分发，
+# 这两条路径都会自然降级：
+#   - embedding 加载失败 → 抛错 → 熔断 → 走本地 TF-IDF 检索（实测 P@3 67.82%）
+#   - 精排模型缺失 → fail-open，保持召回顺序
+# 所以缺这层不影响可用性，但能让镜像小 1GB、构建快十几分钟。
+#
+# 需要本地 embedding（bge-m3）或 Cross-Encoder 精排时才装：
+#   docker compose -f docker-compose.prod.yml build --build-arg INSTALL_ML=1
+# 并且要把模型权重挂进容器（models/ 目录没打进镜像）：
+#   volumes: ["./models:/app/models:ro"]
+
+-r requirements.txt
+
+langchain-huggingface>=0.1
+sentence-transformers>=2.7

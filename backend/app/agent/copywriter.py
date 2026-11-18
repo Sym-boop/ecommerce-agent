@@ -11,7 +11,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 _ROOT = Path(__file__).resolve().parents[3]
 if str(_ROOT) not in sys.path:
@@ -53,29 +53,41 @@ class CopyWriterResult(BaseModel):
 
 
 # ============================================================
-# 二、违禁词过滤（热加载，无需重启）
+# 二、违禁词过滤（统一走 app.common.banned_words，热加载）
 # ============================================================
+# 说明：这里原先自己维护了一份词表 + `word in text` 子串匹配，与
+# app.common.banned_words 形成两套实现，两边口径不一致（单字误报、
+# 冗余命中都只修一处会漏）。现统一委托给 banned_words，只保留
+# `_FORBIDDEN_WORDS` 作为可读的词表快照。
 _FORBIDDEN_WORDS: List[str] = []
 
 
 def _load_forbidden_words() -> None:
+    """刷新本地词表快照（真正的加载与匹配在 app.common.banned_words）。"""
     global _FORBIDDEN_WORDS
-    fp = Path("data/raw/forbidden_words.txt")
-    _FORBIDDEN_WORDS.clear()
-    if fp.exists():
-        with open(fp, "r", encoding="utf-8") as f:
-            for line in f:
-                w = line.strip()
-                if w:
-                    _FORBIDDEN_WORDS.append(w)
+    try:
+        from app.common.banned_words import reload as _reload
+        from app.common.banned_words import words as _words
+
+        _reload()
+        _FORBIDDEN_WORDS = _words()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[copywriter] 违禁词表加载失败: {exc}", file=sys.stderr)
+        _FORBIDDEN_WORDS = []
 
 
 _load_forbidden_words()
 
 
 def filter_forbidden_words(text: str) -> List[str]:
-    """返回文本中命中的违禁词列表。"""
-    return [w for w in _FORBIDDEN_WORDS if w in text]
+    """返回文本中命中的违禁词列表（分词 + 词边界 + 最长优先去重）。
+
+    strict=False：生成阶段只做提示性检测，词表不可用时返回空列表，
+    真正的准入判定由 pipeline.check_copy（fail-closed）负责。
+    """
+    from app.common.banned_words import filter_words
+
+    return filter_words(text)
 
 
 def reload_forbidden_words() -> None:
@@ -86,18 +98,149 @@ def reload_forbidden_words() -> None:
 # ============================================================
 # 三、向量检索（对接 B 的 milvus_cli）
 # ============================================================
+def judge_relevance(category: str, references: List[dict[str, Any]],
+                    *, timeout: float = 20.0) -> Dict[str, Any]:
+    """用 LLM 复核召回结果是否真的与目标类目相关（第二级拒识）。
+
+    **为什么在阈值之后还要 LLM 复核**
+
+    相似度阈值是**词面/向量层面**的过滤：它能挡住"完全不沾边"的，
+    但挡不住"字面像、其实不是同一类"的情况。LLM 能读懂语义，判得更准。
+
+    **代价与边界**
+
+    这是一次额外的模型调用，会多花 token、多 1–2 秒。所以设计成
+    **两级**：先用便宜的阈值粗筛（`RETRIEVAL_MIN_SCORE`），只剩少量候选
+    时才让 LLM 复核。全局开关 `RAG_LLM_JUDGE`（默认开），失败则降级为
+    "全部保留"——**复核失败不能反过来把正常召回归零**。
+    """
+    if not references:
+        return {"kept": [], "dropped": [], "judged": False, "reason": "无候选"}
+
+    if os.getenv("RAG_LLM_JUDGE", "1").strip() not in ("1", "true", "True", "yes"):
+        return {"kept": references, "dropped": [], "judged": False,
+                "reason": "RAG_LLM_JUDGE 已关闭"}
+
+    lines = []
+    for i, ref in enumerate(references):
+        title = str(ref.get("original_title") or "")
+        text = str(ref.get("text") or "")[:200]
+        lines.append(f"[{i}] 类目:{ref.get('category', '')} 平台:{ref.get('platform', '')} "
+                     f"标题:{title} 正文:{text}")
+    prompt = (
+        f"目标商品类目：{category}\n\n"
+        f"以下是待判断的参考文案：\n" + "\n".join(lines) + "\n\n"
+        "请判断每一条是否与目标类目属于**同一商品品类**（可用于参考该品类的文案写法）。"
+        "只输出 JSON，格式：{\"relevant\": [下标数组]}，不要输出其他内容。"
+    )
+
+    try:
+        import json as _json
+
+        raw = _call_llm(
+            [{"role": "system",
+              "content": "你是电商文案检索的相关性审核员。只输出 JSON。"},
+             {"role": "user", "content": prompt}],
+            temperature=0.0,
+        )
+        # 容错：模型可能包 ```json 或带前言，取第一个花括号块
+        start, end = raw.find("{"), raw.rfind("}")
+        if start < 0 or end <= start:
+            raise ValueError(f"模型未返回 JSON: {raw[:120]}")
+        parsed = _json.loads(raw[start:end + 1])
+        idxs = parsed.get("relevant")
+        if not isinstance(idxs, list):
+            raise ValueError("relevant 字段缺失或类型错误")
+        keep = {int(i) for i in idxs if isinstance(i, (int, float)) or str(i).isdigit()}
+        kept = [r for i, r in enumerate(references) if i in keep]
+        dropped = [r for i, r in enumerate(references) if i not in keep]
+        return {"kept": kept, "dropped": dropped, "judged": True,
+                "reason": f"LLM 保留 {len(kept)}/{len(references)}"}
+    except Exception as exc:  # noqa: BLE001
+        # 复核失败 → 保持全部候选（不能因为判官挂了就把正常召回归零）
+        print(f"[copywriter] LLM 相关性复核失败（保留全部候选）: {exc}", file=sys.stderr)
+        return {"kept": references, "dropped": [], "judged": False,
+                "reason": f"复核失败已降级: {type(exc).__name__}"}
+
+
+def retrieve_with_judge(category: str, platform: str, top_k: int = 3) -> Dict[str, Any]:
+    """召回 + LLM 相关性复核，返回候选与复核结果。
+
+    两级拒识：
+    1. **阈值**（`RETRIEVAL_MIN_SCORE`）——便宜的确定性过滤，挡掉完全不沾边的
+    2. **LLM 复核**（`RAG_LLM_JUDGE`）——读语义，挡掉"字面像但不是一个品类"的
+
+    返回：
+        {"references": [...], "judge": {"judged": bool, "kept": n, "dropped": n, "reason": str}}
+    """
+    refs = retrieve_similar_copy(category, platform, top_k=top_k)
+    if not refs:
+        return {"references": [], "judge": {"judged": False, "kept": 0,
+                                            "dropped": 0, "reason": "阈值过滤后无候选"}}
+
+    verdict = judge_relevance(category, refs)
+    kept = verdict["kept"]
+    return {
+        "references": kept,
+        "judge": {
+            "judged": verdict["judged"],
+            "kept": len(kept),
+            "dropped": len(verdict["dropped"]),
+            "reason": verdict["reason"],
+            # 全部被判定不相关时，等同于「拒识」
+            "rejected_all": bool(verdict["judged"] and not kept),
+        },
+    }
+
+
 def retrieve_similar_copy(category: str, platform: str, top_k: int = 3) -> List[dict[str, Any]]:
-    """从 Milvus 召回与类目/平台相关的爆款文案。
+    """从向量库召回与类目相关的爆款文案，并优先同平台。
 
     返回: [{"text": str, "platform": str, "category": str, "original_title": str, ...}]
     失败时 fallback 到空列表（不阻断流程）。
+
+    **为什么不再按平台硬过滤**
+
+    实测（`scripts/evaluate_quality.py`，87 条样本 / 28 类目 / 84 个类目×平台组合）：
+
+        平台硬过滤    Recall@3=1.00  Precision@3=0.0345  MRR=0.052
+        不硬过滤      Recall@5=0.9885 Precision@5=0.6782 MRR=0.839
+
+    原因是语料里「类目×平台」平均只有约 1 条，硬过滤后向量库只能返回
+    **同平台但不同类目**的文案当参考 —— 等于往 Prompt 里塞错品类的示范，
+    反而拉低生成质量。
+
+    改成**软偏好**：先按类目跨平台多召回一些，再把同平台的排到前面。
+    既保住了平台风格偏好，又不会因语料稀疏拿到无关参考。
     """
     try:
         from app.common.milvus_cli import search  # type: ignore
 
-        filters: dict[str, Any] = {"platform": platform}
-        res = search(query_text=category, top_k=top_k, filters=filters)
-        return res
+        need = max(top_k * 3, 9)
+        candidates = search(query_text=category, top_k=need, filters=None)
+        if not candidates:
+            return []
+
+        plat = str(platform or "").strip()
+        same = [d for d in candidates if str(d.get("platform", "")).strip() == plat]
+        other = [d for d in candidates if str(d.get("platform", "")).strip() != plat]
+        # 同平台优先，但各自内部保持相似度降序（search 已排序）
+        ordered = same + other
+
+        # 第三段：Cross-Encoder 精排。
+        #
+        # 为什么放在同平台优先之后：先保住平台风格偏好（这是业务约束），
+        # 再在同一批候选里用 query-doc 交互重新排相关性。
+        # 向量召回是双塔、各自编码后算余弦，丢掉了 query 与 doc 的细粒度交互；
+        # Cross-Encoder 把两者拼起来过一遍模型，精度更高、代价是每条候选一次前向。
+        try:
+            from app.common import rerank as rerank_mod
+
+            out = rerank_mod.rerank(category, ordered, top_k=top_k)
+            return out["docs"]
+        except Exception as exc:  # noqa: BLE001
+            print(f"[copywriter] 精排异常（保持召回顺序）: {exc}", file=sys.stderr)
+            return ordered[:top_k]
     except Exception as exc:  # noqa: BLE001
         print(f"[copywriter] 向量检索失败（回退到空参考）: {exc}", file=sys.stderr)
         return []
@@ -213,7 +356,9 @@ def _chat_url() -> str:
 
 
 def _call_llm(messages: List[dict[str, str]], temperature: float = 0.7) -> str:
-    """调用 OpenAI 兼容协议的 LLM，返回文本内容。"""
+    """调用 OpenAI 兼容协议的 LLM，返回文本内容（带指标与成本统计）。"""
+    from app.common import metrics
+
     if not LLM_API_KEY or LLM_API_KEY.startswith("sk-xxxx"):
         raise RuntimeError(
             "未配置有效 LLM_API_KEY，请在项目根目录 .env 中设置（参考 .env.example）"
@@ -235,13 +380,30 @@ def _call_llm(messages: List[dict[str, str]], temperature: float = 0.7) -> str:
         "temperature": temperature,
     }
 
-    with httpx.Client(timeout=60.0) as client:
-        resp = client.post(url, headers=headers, json=body)
-        if resp.status_code >= 400:
-            raise RuntimeError(
-                f"LLM 调用失败 HTTP {resp.status_code}: {resp.text[:500]}"
-            )
-        data = resp.json()
+    with metrics.track("llm_call") as t:
+        with httpx.Client(timeout=60.0) as client:
+            resp = client.post(url, headers=headers, json=body)
+            if resp.status_code >= 400:
+                raise RuntimeError(
+                    f"LLM 调用失败 HTTP {resp.status_code}: {resp.text[:500]}"
+                )
+            data = resp.json()
+
+        # 记录真实 token 用量（服务商返回 usage 时），用于成本估算
+        usage = data.get("usage") or {}
+        if usage:
+            pt = int(usage.get("prompt_tokens") or 0)
+            ct = int(usage.get("completion_tokens") or 0)
+            t.tokens(input=pt, output=ct)
+            # 再落一本按日/按月可聚合的账本：
+            # metrics 是进程内累加（重启归零、无时间维度），答不了「这个月用了多少」
+            try:
+                from app.common import token_usage
+
+                token_usage.record(model=LLM_MODEL, prompt_tokens=pt,
+                                   completion_tokens=ct, scene="copywriter")
+            except Exception as exc:  # noqa: BLE001
+                print(f"[copywriter] token 账本记录失败: {exc}", file=sys.stderr)
 
     try:
         return data["choices"][0]["message"]["content"]
@@ -326,12 +488,26 @@ def generate_copy(input_data: CopyWriterInput) -> CopyWriterResult:
     主流程：召回参考文案 → 构建 prompt → LLM 生成 → 违禁词检测 → 返回结果。
     若 LLM 调用失败，自动 fallback 到模板文案（保证不返回空结果）。
     """
-    # 1. 召回参考文案
-    references = retrieve_similar_copy(
-        category=input_data.product_category,
-        platform=input_data.platform or DEFAULT_PLATFORM,
-        top_k=input_data.reference_count,
-    )
+    from app.common import metrics
+
+    # 1. 召回参考文案（向量检索，失败降级为空参考）
+    with metrics.track("rag_retrieval") as rag:
+        outcome = retrieve_with_judge(
+            category=input_data.product_category,
+            platform=input_data.platform or DEFAULT_PLATFORM,
+            top_k=input_data.reference_count,
+        )
+        references = outcome["references"]
+        judge = outcome["judge"]
+        if judge.get("judged"):
+            metrics.incr("rag_llm_judged")
+        if judge.get("dropped"):
+            metrics.incr("rag_llm_dropped", judge["dropped"])
+        if judge.get("rejected_all"):
+            metrics.incr("rag_rejected_by_llm")
+        if not references:
+            rag.degraded()
+            metrics.incr("rag_empty_fallback")
     reference_snippets = _extract_snippets(references)
 
     # 2. 构建 prompt
@@ -343,6 +519,11 @@ def generate_copy(input_data: CopyWriterInput) -> CopyWriterResult:
         messages = [{"role": "user", "content": prompt}]
         llm_output = _call_llm(messages)
     except Exception as exc:  # noqa: BLE001
+        # 静默降级是历史坑：日志只有一行 warning，很容易以为功能正常。
+        # 这里同时打指标（degradation_rate），让"没调通"变得可观测。
+        from app.common import metrics
+
+        metrics.incr("llm_degraded_to_template")
         print(f"[copywriter] LLM 调用失败，使用模板文案: {exc}", file=sys.stderr)
         llm_output = ""
 

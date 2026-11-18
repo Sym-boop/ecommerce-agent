@@ -132,3 +132,45 @@ async def copy_status_api(task_id: str):
     if task is None:
         return fail(404, "文案任务不存在")
     return ok(task)
+
+
+@router.post("/retrieval-preview")
+async def retrieval_preview_api(payload: dict | None = None):
+    """只看检索与拒识过程，不生成文案（调试 / 演示用）。
+
+    输入 `{"category": "蓝牙耳机", "platform": "xiaohongshu", "top_k": 3}`，
+    返回：召回了几条、阈值挡掉多少、LLM 复核保留/剔除多少。
+
+    这个接口的价值是**把两级拒识摊开给人看**——不用真跑一次生成也能验证
+    检索链路是否在工作。
+    """
+    body = payload or {}
+    category = str(body.get("category") or "").strip()
+    if not category:
+        return fail(400, "缺少 category")
+    try:
+        from app.agent.copywriter import retrieve_with_judge
+
+        outcome = retrieve_with_judge(
+            category=category,
+            platform=str(body.get("platform") or "").strip(),
+            top_k=int(body.get("top_k") or 3),
+        )
+        return ok({
+            "category": category,
+            "platform": body.get("platform") or "",
+            "judge": outcome["judge"],
+            "references": [
+                {
+                    "title": r.get("original_title", ""),
+                    "category": r.get("category", ""),
+                    "platform": r.get("platform", ""),
+                    "score": r.get("score"),              # 向量/阈值分数
+                    "rerank_score": r.get("rerank_score"),  # Cross-Encoder 精排分
+                    "text": str(r.get("text", ""))[:160],
+                }
+                for r in outcome["references"]
+            ],
+        })
+    except Exception as exc:  # noqa: BLE001
+        return fail(500, str(exc))

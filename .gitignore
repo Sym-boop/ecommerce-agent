@@ -31,3 +31,23 @@ node_modules/
 #个人脚本
 scripts/rebuild_knowledge.py
 
+
+# ===== MinerU 独立环境与运行产物 =====
+# MinerU 依赖重（gradio/onnxruntime/modelscope），装在独立 venv 里，不进主环境
+.venv-mineru/
+.mineru-work/
+.mineru-out/
+.mineru-home/
+
+# ===== 压测工具独立环境 =====
+.venv-locust/
+
+# 压测报告临时目录
+.locust-report/
+
+# Reranker 模型权重（1GB，不入库）
+models/
+
+# ===== 生产部署 =====
+.env.prod
+.env.prod.local

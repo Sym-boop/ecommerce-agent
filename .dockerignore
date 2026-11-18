@@ -1,0 +1,42 @@
+# 后端构建忽略项：把大目录排除，镜像才小、构建才快
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# 虚拟环境（三个都要排除：主环境不需要，MinerU/locust 的更不能进镜像）
+.venv/
+.venv-mineru/
+.venv-locust/
+
+# 大模型权重（1GB+，不随镜像分发；缺失时精排自动 fail-open）
+models/
+.mineru-home/
+.mineru-out/
+.mineru-work/
+
+# 运行期数据（镜像只带 seed-data，data/ 由卷提供）
+data/media/
+data/reports/
+data/graph_checkpoints.sqlite
+data/*.sqlite
+data/metrics/token_usage.jsonl
+
+# 前端（后端镜像不需要）
+frontend/node_modules/
+frontend/dist/
+
+# 密钥与本地配置
+.env
+.env.prod
+.env.local
+
+# 文档与杂项
+*.md
+!README.md
+docs/
+.git/
+.gitignore
+.locust-report/

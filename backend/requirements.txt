@@ -1,7 +1,17 @@
-# 后端依赖清单（成员B）
-# 安装: pip install -r requirements.txt
+# 后端核心依赖（部署到容器时必装）
+#
+# 分组说明：核心依赖保证「TF-IDF 降级模式」下全部功能可用；
+# 需要本地 embedding / Cross-Encoder 精排时，另装 requirements-ml.txt。
+#
+# 历史教训：这份清单曾漏了 jieba / tiktoken / scikit-learn / Pillow /
+# PyMySQL / pypdf / python-docx / numpy。漏装的后果全是**静默降级**：
+#   - 缺 jieba   → 违禁词单字规则失效，「第一次」会被误报（我们修过的 bug 复活）
+#   - 缺 sklearn → TF-IDF 降级通道抛错，检索直接返回空，RAG 全废
+#   - 缺 tiktoken→ 文档切块失败
+#   - 缺 pyexec 类 → MySQL/图片/文档解析轮着挂
+# 所以下面每一项都标注了「缺了会怎样」。
 
-# Web 框架
+# ---------- Web 框架 ----------
 fastapi>=0.115,<1.0
 uvicorn[standard]>=0.30
 pydantic>=2.7
@@ -9,26 +19,30 @@ pydantic-settings>=2.3
 python-dotenv>=1.0
 python-multipart>=0.0.9
 
-# 向量数据库
-pymilvus>=2.4,<3.0
+# ---------- Agent 编排 ----------
+langgraph>=1.0,<2.0
 
-# 异步任务队列
+# ---------- 向量库 ----------
+pymilvus>=2.4,<4.0
+numpy>=1.26                 # 图片描述子构建、向量余弦计算
+
+# ---------- 文本与文档处理 ----------
+jieba>=0.42                 # 违禁词分词。缺了单字「最」完全不匹配，多字退化成纯子串匹配
+tiktoken>=0.7               # 文档切块按 token 计数。缺了切块直接抛错
+pypdf>=4.0                  # PDF 解析（MinerU 不可用时的回退档）
+python-docx>=1.0            # Word 解析（段落 + 表格）
+scikit-learn>=1.4           # TF-IDF 降级检索。缺了检索返回空，RAG 全废
+Pillow>=10.0                # 图片视觉描述子（HSV 直方图 / 梯度）
+pandas>=2.2                 # 语料 CSV 读取
+
+# ---------- 存储与队列 ----------
+PyMySQL>=1.1                # MySQL 存储后端 + SKIP LOCKED 队列
 celery[redis]>=5.4
 redis>=5.0
 
-# HTTP 客户端（调用 OpenAI 兼容 Embedding API）
+# ---------- HTTP ----------
 httpx>=0.27
+openai>=1.30                # OpenAI 兼容 embedding 通道（可不用，但 import 在惰性路径里）
 
-# 图文海报渲染（Playwright 无头 Chromium）
-# 安装后需执行: playwright install chromium
-playwright>=1.44
-
-# 数据处理（load_knowledge.py 读取 CSV）
-pandas>=2.2
-
-# 可选：本地 Embedding（走 HuggingFace bge-m3 时）
-langchain-huggingface>=0.1
-sentence-transformers>=2.7
-
-# Agent 编排（广告生成主图：StateGraph + 断点暂停 / 人工审查恢复）
-langgraph>=1.0,<2.0
+# ---------- 图文渲染 ----------
+playwright>=1.44            # 海报渲染。镜像里还需 playwright install chromium

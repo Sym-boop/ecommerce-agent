@@ -1,0 +1,11 @@
+# 前端构建上下文忽略项
+# 不加这个，node_modules 会被打进构建上下文（几千个文件、上百 MB），
+# 构建会慢到不可接受。
+node_modules/
+dist/
+.vite/
+npm-debug.log*
+.DS_Store
+.env
+.env.local
+*.md

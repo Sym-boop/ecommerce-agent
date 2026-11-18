@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -54,6 +55,9 @@ from app.api.batch_router import router as batch_router
 from app.api.billing_router import router as billing_router
 from app.api.qianchuan_router import router as qianchuan_router
 from app.api.store_router import router as store_router
+from app.api.system_router import router as system_router
+from app.api.metrics_router import router as metrics_router
+from app.api.diagnose_router import router as diagnose_router
 from fastapi.staticfiles import StaticFiles
 
 
@@ -64,11 +68,38 @@ APP_VERSION = "0.1.0"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """生命周期：启动时探测依赖服务（失败不阻塞启动，状态经 /health 暴露）。
+    """生命周期：启动时探测依赖服务 + 自检配置（失败不阻塞启动，状态经 /health 暴露）。
 
     Milvus 探测放入后台线程并限时等待：VM / Milvus 未启动时不会阻塞服务启动。
     """
     import threading
+
+    # 启动自检：配置项 fail-fast 提示（不阻断启动，但把问题显式打出来）
+    try:
+        from app.common.config_check import log_startup_report
+        log_startup_report()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("启动自检失败: %s", exc)
+
+    # 清理历史遗留的重复物料（同类型+同标题+同正文）
+    try:
+        from app.common import ad_store
+        removed = ad_store.dedupe_existing()
+        if removed:
+            logger.info("启动去重：清理重复广告物料 %d 条", removed)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("启动去重失败: %s", exc)
+
+    # 用当前违禁词规则重算存量物料的审查结论：
+    # 检测规则修好后（如去掉单字「最」的误报），历史数据里的旧误报会"自愈"
+    try:
+        from app.common import ad_store
+        result = ad_store.revalidate_violations()
+        if result.get("fixed"):
+            logger.info("审查结论自愈：重算 %d 条，修正 %d 条",
+                        result.get("checked"), result.get("fixed"))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("审查结论重算失败: %s", exc)
 
     def _probe_milvus() -> None:
         try:
@@ -77,12 +108,28 @@ async def lifespan(app: FastAPI):
             logger.info("Milvus 连接正常")
         except Exception as exc:  # noqa: BLE001
             logger.warning("Milvus 不可用（请确认 docker-compose 服务已启动）: %s", exc)
+            # 探测失败就把熔断器打开，避免首批 /health 请求各等约 30 秒
+            try:
+                from app.common.milvus_cli import get_wrapper
+                get_wrapper()._trip_breaker(exc)
+            except Exception:  # noqa: BLE001
+                pass
 
     probe = threading.Thread(target=_probe_milvus, daemon=True)
     probe.start()
     probe.join(timeout=3)
     if probe.is_alive():
         logger.warning("Milvus 探测超时（>3s），服务以内存模式继续启动")
+        # 超时同样视为不可达：打开熔断，让后续请求立即走降级通道
+        try:
+            from app.common.milvus_cli import get_wrapper
+            get_wrapper()._trip_breaker(RuntimeError("启动探测超时（>3s）"))
+        except Exception:  # noqa: BLE001
+            pass
+
+    # 启动依赖探活后台线程：/health 只读快照，不在请求里做网络探活。
+    # （启动时阻塞探活 3 秒是为了让首批请求的 /health 别显示"未知"）
+    _start_health_refresher()
 
     yield
     from app.common.milvus_cli import close_client
@@ -109,6 +156,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def actor_context_middleware(request, call_next):
+    """每个请求开始时解析操作人并写入 ContextVar。
+
+    **必须在中间件里做**：FastAPI 会把同步端点丢到 anyio 工作线程池执行，
+    依赖函数与端点函数可能落在**不同线程**上；用 threading.local 会串号
+    （实测：运营发起的生成被记成上一个请求的审查员）。
+    中间件运行在请求任务的上下文中，配合 ContextVar 可保证按请求隔离。
+    """
+    try:
+        from app.api.deps import resolve_actor
+
+        resolve_actor(request.headers.get("authorization"))
+    except Exception:  # noqa: BLE001
+        pass
+    return await call_next(request)
+
 Path("data/media").mkdir(parents=True, exist_ok=True)
 app.mount("/media", StaticFiles(directory="data/media"), name="media")
 
@@ -127,6 +192,11 @@ app.include_router(batch_router)
 app.include_router(billing_router)
 app.include_router(qianchuan_router)
 app.include_router(store_router)
+# 系统管理：配置自检 / 指标 / 审计 / 质量 / 版本 / 数据飞轮
+app.include_router(system_router)
+# 投放效果回流：平台回传 → 时序落库 → CTR/CVR/CPA 汇总
+app.include_router(metrics_router)
+app.include_router(diagnose_router)
 # ---------------------------------------------------------------------------
 # 统一响应体
 # ---------------------------------------------------------------------------
@@ -143,32 +213,114 @@ def fail(status: int, msg: str) -> JSONResponse:
 # 健康检查
 # ---------------------------------------------------------------------------
 
-@app.get("/health", tags=["system"])
-def health() -> dict:
-    """健康检查：返回各依赖服务的可用状态。"""
-    milvus_ok = redis_ok = False
-    knowledge_base_rows = 0
+# 依赖探活快照：由**后台线程**定期刷新，/health 只读内存。
+#
+# 为什么不在请求里探活：
+#   /health 是同步端点，会被丢进 anyio 线程池（默认 40 线程）。50 并发压测时，
+#   熔断窗口刚过的一次真实 Milvus 连接要 **5 秒**，一批请求同时卡在探活上，
+#   后续请求排队 —— 实测 P99 达到 **20000ms**（5s × 4 轮排队）。
+#   把探活移出请求路径后，/health 变成纯内存读。
+_HEALTH_REFRESH_SECONDS = float(os.getenv("HEALTH_REFRESH_SECONDS", "10"))
+_HEALTH_SNAPSHOT: dict[str, Any] = {
+    "milvus": False,
+    "redis": False,
+    "knowledge_base_rows": 0,
+    "at": 0.0,
+}
+_health_thread: Optional[threading.Thread] = None
+
+
+def _probe_dependencies_once() -> None:
+    """探一次依赖，写入快照。只在后台线程里跑。"""
+    milvus_ok = False
+    rows = 0
     try:
         from app.common.milvus_cli import get_wrapper
+
         wrapper = get_wrapper()
-        wrapper.client.list_collections()  # 真正探测连通性（不可达会抛错）
-        milvus_ok = True
-        knowledge_base_rows = wrapper.count() if wrapper.has_collection() else 0
+        milvus_ok = wrapper.ping()
+        rows = wrapper.count()
     except Exception:  # noqa: BLE001
         pass
+
+    redis_ok = False
     try:
         import redis as redis_lib
+
         from app.common.celery_app import REDIS_URL
-        redis_lib.from_url(REDIS_URL, socket_connect_timeout=2).ping()
+
+        redis_lib.from_url(
+            REDIS_URL, socket_connect_timeout=0.5, socket_timeout=0.5
+        ).ping()
         redis_ok = True
     except Exception:  # noqa: BLE001
         pass
+
+    _HEALTH_SNAPSHOT.update(
+        milvus=milvus_ok, redis=redis_ok,
+        knowledge_base_rows=rows, at=time.time(),
+    )
+
+
+def _health_refresher() -> None:
+    """后台刷新依赖状态。慢探活只影响这里，不影响请求延迟。"""
+    while True:
+        try:
+            _probe_dependencies_once()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("依赖探活失败: %s", exc)
+        time.sleep(_HEALTH_REFRESH_SECONDS)
+
+
+def _start_health_refresher() -> None:
+    global _health_thread
+    if _health_thread is not None and _health_thread.is_alive():
+        return
+    _health_thread = threading.Thread(
+        target=_health_refresher, name="health-refresher", daemon=True
+    )
+    _health_thread.start()
+    logger.info("依赖探活后台线程已启动（间隔 %ss）", _HEALTH_REFRESH_SECONDS)
+
+
+@app.get("/health", tags=["system"])
+def health() -> dict:
+    """健康检查：依赖状态来自**后台刷新快照**，本请求不发起任何网络探活。
+
+    `banned_words.available=False` 是**严重**状态：风控已 fail-closed，
+    新物料无法登记通过，必须尽快修复词表。
+    """
+    snap = dict(_HEALTH_SNAPSHOT)
+    milvus_ok = bool(snap["milvus"])
+    redis_ok = bool(snap["redis"])
+    knowledge_base_rows = int(snap["knowledge_base_rows"] or 0)
+
+    try:
+        from app.common import rerank as rerank_mod
+        rerank_status = rerank_mod.status()
+    except Exception as exc:  # noqa: BLE001
+        rerank_status = {"available": False, "error": str(exc)}
+
+    try:
+        from app.common.banned_words import status as bw_status
+        banned = bw_status()
+    except Exception as exc:  # noqa: BLE001
+        banned = {"available": False, "error": str(exc), "word_count": 0}
+
+    # 风控不可用时整体状态不应报 ok（避免"看起来健康"）
+    healthy = milvus_ok and redis_ok and banned.get("available", False)
     return {
-        "status": "ok" if (milvus_ok and redis_ok) else "degraded",
+        "status": "ok" if healthy else "degraded",
         "version": APP_VERSION,
         "milvus": milvus_ok,
+        # 首次刷新尚未完成时 at=0，不要算出一个天文数字
+        "probe_age_seconds": (
+            round(time.time() - float(snap["at"]), 1) if snap.get("at") else None
+        ),
         "knowledge_base_rows": knowledge_base_rows,
         "redis": redis_ok,
+        "rerank": rerank_status,
+        "banned_words": banned,
     }
 
 
