@@ -129,6 +129,15 @@ project-ecommerce-agent/
 
 ## 七、团队分工
 
+> **先说明一件事**：下表是 2026-09-21 启动会时的**模块划分**。
+> 实际开发中发生了两件事，所以 **git 的提交人不等于模块负责人**：
+> 1. 有人本地完成工作后由队友代为提交入库；
+> 2. 主链路在 10 月做过一次重构，模块重心发生了转移。
+>
+> 真实归属见下方「开发中的调整」。
+
+### 启动会划分
+
 | 成员 | 职责 | 主要文件 |
 |---|---|---|
 | A | MCP 适配器 | `mcp_servers/` |
@@ -137,6 +146,34 @@ project-ecommerce-agent/
 | D | 文案生成器 | `backend/app/agent/copywriter.py` |
 | E | 定价与竞品监控 | `backend/app/agent/pricing.py` |
 | F | 前端驾驶舱 + 项目文档 + 压测样本 | `frontend/`、`readme.md`、`claude.md`、`docs/meeting-notes/`、`data/samples/` |
+
+### 开发中的调整
+
+主链路从「Supervisor 目标驱动」收敛成「商品驱动的固定流水线」，编排层重心落到 `ad_graph.py`；
+同时新增了违禁词风控这一独立模块；原 F 分工中的前端部分由 yangliuyu 承担。
+
+| 模块 | 负责人 | 主要文件 | 内容 |
+|---|---|---|---|
+| **后端 Agent 编排** | 寿逸铭 | `backend/app/agent/ad_graph.py` | 7 节点 / 5 条件边的状态机设计、`interrupt` + checkpointer 审批断点、逐段短路防空跑 |
+| **文案生成 Agent** | 寿逸铭 | `backend/app/agent/copywriter.py` | 多平台 Prompt 分别建模、RAG 召回注入、输出解析三级兜底 |
+| **违禁词风控** | 寿逸铭 | `backend/app/common/banned_words.py`、`data/raw/forbidden_words.txt` | 160 条词库按五类法条归类、jieba 分词 + token 边界判定、fail-closed |
+| **语料准备与评测样本** | 寿逸铭 | `data/processed/`、`data/samples/` | 语料清洗与切分、87 条三平台爆款样本 |
+| 图文 / 视频 Agent | yangliuyu | `image_generator.py`、`video_generator.py` | Playwright 无头渲染海报、可灵图生视频 |
+| 前端驾驶舱 | yangliuyu | `frontend/` | Vue3 + Element Plus + Pinia |
+| Supervisor 调度（早期） | — | `supervisor.py` | 主链路重构后退为 API-only |
+| 存储 / 队列 / 审计 / 版本链 / RBAC | 团队共同 | `store_backend.py`、`job_queue.py`、`audit.py`、`versions.py`、`rbac.py` | 收尾阶段补充 |
+
+### 交付后的独立硬化（2026-11）
+
+项目交付后由 **寿逸铭** 独立完成一轮硬化，见提交历史中 2026-11 的提交：
+
+- RAG 检索策略改造（Precision@3 3.45% → 67.82%）与 Cross-Encoder 精排接入
+- 文档解析器可插拔（MinerU / PyPDF / python-docx）与 token 切块
+- 违禁词表补全分类与法条依据（160/160）、替换建议表入库
+- 素材诊断 Agent（只读工具 + LLM 自主工具调用）
+- 审批单落盘恢复、生产部署文件、单测补齐到 187 个
+
+---
 
 ## 八、常用命令速查
 
