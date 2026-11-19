@@ -63,6 +63,10 @@ def main() -> int:
                     help="播种审查中心素材（写文件，需重启后端才可见）")
     ap.add_argument("--approval", action="store_true",
                     help="生成一张实时审批单（需后端已启动，重启后会变 orphaned）")
+    ap.add_argument("--asset", action="store_true",
+                    help="真跑一次图文生成（本地 Playwright 渲染海报，约 10 秒）")
+    ap.add_argument("--deliver", action="store_true",
+                    help="演示投放：登记店铺 → 预检 → mock 提交")
     args = ap.parse_args()
     base = args.base.rstrip("/") + "/api/v1"
     total = 6
@@ -165,6 +169,12 @@ def main() -> int:
     if args.approval:
         print("\n[approval] 生成实时审批单")
         seed_approval(base, token)
+    if args.asset:
+        print("\n[asset] 真跑一次图文生成")
+        warm_asset(base, token)
+    if args.deliver:
+        print("\n[deliver] 演示投放（登记店铺 → 预检 → mock 提交）")
+        warm_deliver(base, token)
 
     # ---------- 结论 ----------
     print("\n" + "=" * 56)
@@ -277,6 +287,94 @@ def seed_approval(base: str, token: str) -> None:
                 print(f"      {a.get('id')}  {str(a.get('reason') or '')[:34]}")
             return
     print("  ⚠️ 15 秒内没等到审批单，检查 /goals 的任务是否报错")
+
+
+def warm_asset(base: str, token: str) -> None:
+    """真跑一次图文生成，拿到海报 URL。
+
+    `IMAGE_PROVIDER=local` 时不需要任何第三方 Key：Playwright 无头浏览器把 HTML
+    模板渲染成 1080x1440 海报，实测约 10 秒。这是演示里最容易出效果的一幕：
+    **真·本地渲染，不依赖外部服务**。
+    """
+    import io
+    import urllib.request as _urllib
+    import uuid
+
+    st, d = call(base, "POST", "/adgen/copy", {
+        "product": {"name": "便携保温杯", "category": "水杯",
+                    "sell_points": ["12 小时保温", "304 不锈钢", "500ml"]},
+        "platform": "xiaohongshu"}, token=token)
+    if st != 200:
+        print(f"  ⚠️ 文案生成失败 HTTP {st}，跳过图文")
+        return
+    sid = d["data"]["session_id"]
+
+    boundary = "----dsh" + uuid.uuid4().hex
+    buf = io.BytesIO()
+    for k, v in {"session_id": sid, "type": "image", "keyword": "通勤 保温"}.items():
+        buf.write(f"--{boundary}\r\n".encode())
+        buf.write(f'Content-Disposition: form-data; name="{k}"\r\n\r\n'.encode())
+        buf.write(str(v).encode() + b"\r\n")
+    buf.write(f"--{boundary}--\r\n".encode())
+
+    req = _urllib.Request(f"{base}/adgen/asset", data=buf.getvalue(), method="POST")
+    req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+    req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with _urllib.urlopen(req, timeout=120) as resp:
+            task_id = json.loads(resp.read().decode())["data"]["task_id"]
+    except Exception as exc:  # noqa: BLE001
+        print(f"  ⚠️ 提交图文任务失败：{exc}")
+        return
+
+    for _ in range(20):
+        time.sleep(3)
+        st, d = call(base, "GET", f"/adgen/asset/status/{task_id}", token=token)
+        data = d.get("data") or {}
+        if data.get("status") in ("succeeded", "failed"):
+            if data.get("status") == "succeeded":
+                print(f"  ✅ 海报已生成：{data.get('url')}")
+                print(f"     session={sid}（生成页可直接看到）")
+            else:
+                print(f"  ❌ 图文生成失败：{data.get('error') or data}")
+            return
+    print("  ⚠️ 图文任务超时")
+
+
+def warm_deliver(base: str, token: str) -> None:
+    """登记演示店铺 → 预检 → mock 提交。
+
+    两个坑（都实测过）：
+    1. 字段名是 `shop_id`，不是 `store_id`；
+    2. 平台键必须是 **qianchuan**——MCP 侧预检读 `data/stores/qianchuan.json`，
+       登记到 `douyin.json` 会一直报「店铺未登记」。
+    """
+    st, _ = call(base, "POST", "/stores/qianchuan", {
+        "shop_id": "44000001",
+        "name": "演示店铺 · 保温杯专营",
+        "aweme_id": "AW-9001",
+        "douyin_account": "演示抖音号",
+        "advertiser_id": "1800000001",
+        "products": [{"product_id": "P1001", "name": "便携保温杯", "price": 89.0}],
+    }, token=token)
+    print(f"  {'✅' if st == 200 else '⚠️'} 登记店铺 HTTP {st}")
+
+    payload = {
+        "advertiser_id": "1800000001", "shop_id": "44000001", "product_id": "P1001",
+        "aweme_id": "AW-9001", "image_id": "demo-poster",
+        "name": "保温杯-通勤-图文计划", "marketing_goal": "短视频带货", "budget": 5000,
+    }
+    st, d = call(base, "POST", "/qianchuan/preflight", payload, token=token)
+    data = d.get("data") or {}
+    print(f"  预检 ready={data.get('ready')} mode={data.get('mode')}")
+    for c in data.get("checks") or []:
+        print(f"    {'✅' if c['ok'] else '❌'} {c['name']}")
+
+    st, d = call(base, "POST", "/qianchuan/deliver", payload, token=token)
+    data = d.get("data") or {}
+    result = data.get("result") or {}
+    print(f"  提交 submitted={data.get('submitted')} mode={data.get('mode')}")
+    print(f"    计划 ID={result.get('ad_promotion_id')} 状态={result.get('status')}")
 
 
 if __name__ == "__main__":

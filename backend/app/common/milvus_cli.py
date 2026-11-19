@@ -110,7 +110,14 @@ class MilvusClientWrapper:
         cooldown = float(os.getenv("MILVUS_BREAKER_SECONDS", "60"))
         self._breaker_until = _time.monotonic() + cooldown
         self._breaker_hits += 1
-        logger.warning(
+        # 降噪开关：**首次仍用 WARNING**（依赖挂了这件事不能藏起来），
+        # 之后的重试降为 INFO。
+        # 为什么需要：离线/演示环境里 Milvus 不可达是**预期状态**，而健康检查会
+        # 每 10 秒探一次，60 秒熔断到期就再触发一次 WARNING——日志被同一句话刷满，
+        # 真正的问题反而看不见。
+        quiet = os.getenv("MILVUS_LOG_QUIET", "0").strip() not in ("0", "false", "False", "")
+        log_fn = logger.info if (quiet and self._breaker_hits > 1) else logger.warning
+        log_fn(
             "Milvus 熔断 %ss（第 %d 次）：%s；期间直接使用内存降级通道",
             int(cooldown), self._breaker_hits, exc,
         )
