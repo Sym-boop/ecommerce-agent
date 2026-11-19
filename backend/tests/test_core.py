@@ -2648,12 +2648,20 @@ class TestLocalVideoProvider(unittest.TestCase):
     def setUp(self):
         if not self.vg.local_available():
             self.skipTest("未安装 imageio-ffmpeg，跳过本地合成测试")
-        # 造一张 1080x1440 的纯色图，避免依赖仓库里的素材
-        from PIL import Image
+        # 造测试图：**必须有纹理**。
+        # 纯色图平移看不出任何像素变化（实测运动检测得到 0.00），
+        # 会让「视频是否在动」的断言永远失败或永远通过，失去意义。
+        from PIL import Image, ImageDraw
 
         self._tmp = tempfile.mkdtemp(prefix="dsh_video_")
         self._img = os.path.join(self._tmp, "src.png")
-        Image.new("RGB", (1080, 1440), (245, 214, 214)).save(self._img)
+        img = Image.new("RGB", (1080, 1440), (245, 214, 214))
+        draw = ImageDraw.Draw(img)
+        for i in range(0, 1080, 60):
+            draw.rectangle([i, 0, i + 30, 1440], fill=(200, 120, 120))
+        for i in range(0, 1440, 90):
+            draw.rectangle([0, i, 1080, i + 18], fill=(90, 60, 60))
+        img.save(self._img)
 
     def tearDown(self):
         shutil.rmtree(self._tmp, ignore_errors=True)
@@ -2676,6 +2684,42 @@ class TestLocalVideoProvider(unittest.TestCase):
         with self.assertRaises(self.vg.VideoAPIError) as ctx:
             self.vg.generate_short_video("测试", self._img, duration=2)
         self.assertIn("VIDEO_PROVIDER=local", str(ctx.exception))
+
+    def test_local_video_actually_moves(self):
+        """产出的视频**必须真的有画面变化**，不能是一张静图配淡入淡出。
+
+        这条是回归测试：第一版用 `zoompan ... d=1` 做推进，结果画面完全静止
+        （实测 1s 与 5s 两帧平均像素差 = 0.00），只有淡入淡出在变亮度。
+        「能播放」不等于「有运动」，所以这里直接从成片抽两帧比对像素。
+        """
+        import subprocess
+
+        from PIL import Image
+
+        import numpy as np
+
+        os.environ["VIDEO_PROVIDER"] = "local"
+        os.environ["VIDEO_API_KEY"] = "***"
+        out = Path(self.vg.generate_short_video("运动检测", self._img, duration=4))
+        self.addCleanup(lambda: out.unlink(missing_ok=True))
+
+        import imageio_ffmpeg
+
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+        frames = {}
+        for stamp in (0.8, 3.2):
+            f = Path(self._tmp) / f"motion_{stamp}.png"
+            subprocess.run([exe, "-y", "-ss", str(stamp), "-i", str(out),
+                            "-frames:v", "1", str(f)], capture_output=True)
+            if f.exists():
+                frames[stamp] = np.asarray(Image.open(f).convert("L"), dtype=np.int16)
+        self.assertEqual(len(frames), 2, "抽帧失败，无法判定运动")
+        a, b = frames[0.8], frames[3.2]
+        mean_diff = float(np.abs(a - b).mean())
+        self.assertGreater(
+            mean_diff, 2.0,
+            f"画面几乎没变化（平均像素差 {mean_diff:.2f}）——疑似又用回了 zoompan d=1",
+        )
 
     def test_local_missing_image_raises(self):
         """素材不存在要报错，而不是产出一个空视频。"""

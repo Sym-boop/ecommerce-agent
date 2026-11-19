@@ -319,13 +319,22 @@ def _generate_local(prompt: str, image_path: str, duration: int) -> str:
     exe = _ffmpeg_exe()
     out_path = OUTPUT_DIR / f"{uuid.uuid4().hex[:8]}.mp4"
 
-    # zoompan 的 d=1 表示「每个输入帧只出一帧」，配合 -loop 1 形成平滑推进；
-    # 直接给 d=duration*fps 会与 -t 叠加导致时长翻倍（踩过）
+    # 用「放大后对角平移」做出运动，**不要用 zoompan**。
+    #
+    # 踩过的坑：一开始写的是
+    #     zoompan=z='min(zoom+0.0007,1.12)':d=1:s=1080x1440
+    # 配合 `-loop 1`。结果是**画面完全静止**——实测 1s 与 5s 两帧的平均像素差
+    # 是 0.00（只有淡入淡出带来的亮度变化）。原因是 `d=1` 让每个输入帧都从
+    # zoom=1 重新开始一段长度为 1 的缩放，累积不起来。
+    #
+    # 换成 crop 的 x/y 表达式：它按 `t`（当前时间）逐帧求值，平移必然生效。
+    # 实测同样参数下 1s→5s 平均像素差 31.4、28% 像素在变，肉眼可见在动。
+    # 源图先放大到 1.2 倍，才有平移余量（否则没有可移动的像素）。
+    pan = f"(t/{duration})"
     vf = (
-        "scale=1080:1440:force_original_aspect_ratio=increase,"
-        "crop=1080:1440,"
-        f"zoompan=z='min(zoom+0.0007,1.12)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
-        f":d=1:s=1080x1440:fps={fps},"
+        "scale=1296:1728:force_original_aspect_ratio=increase,"
+        "crop=1296:1728,"
+        f"crop=1080:1440:x='(iw-ow)*{pan}':y='(ih-oh)*{pan}',"
         f"fade=t=in:st=0:d={fade},fade=t=out:st={duration - fade}:d={fade},"
         "format=yuv420p"
     )
