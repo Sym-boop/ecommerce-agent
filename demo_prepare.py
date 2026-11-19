@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import pathlib
 import sys
 import time
 import urllib.error
@@ -67,6 +68,8 @@ def main() -> int:
                     help="真跑一次图文生成（本地 Playwright 渲染海报，约 10 秒）")
     ap.add_argument("--deliver", action="store_true",
                     help="演示投放：登记店铺 → 预检 → mock 提交")
+    ap.add_argument("--admin", action="store_true",
+                    help="把 demo 账号提升为管理员（否则点不动审查/审批）")
     args = ap.parse_args()
     base = args.base.rstrip("/") + "/api/v1"
     total = 6
@@ -175,6 +178,9 @@ def main() -> int:
     if args.deliver:
         print("\n[deliver] 演示投放（登记店铺 → 预检 → mock 提交）")
         warm_deliver(base, token)
+    if args.admin:
+        print("\n[admin] 提升 demo 账号为管理员")
+        promote_admin("demo")
 
     # ---------- 结论 ----------
     print("\n" + "=" * 56)
@@ -287,6 +293,39 @@ def seed_approval(base: str, token: str) -> None:
                 print(f"      {a.get('id')}  {str(a.get('reason') or '')[:34]}")
             return
     print("  ⚠️ 15 秒内没等到审批单，检查 /goals 的任务是否报错")
+
+
+def promote_admin(username: str = "demo") -> None:
+    """把指定账号的角色改成「管理员」。
+
+    为什么需要：注册接口把 role 写死成「运营」，而「运营」没有 `ad.approve`
+    权限——于是**演示时谁都点不动审批**（实测 403）。这属于权限模型的引导缺口：
+    第一个管理员只能由运维在库里指定。
+
+    生产环境应该做成：首个注册用户自动成为管理员，或由已有管理员在后台授权。
+    这里为保证演示可用，直接改 SQLite（`resolve_actor` 每请求读库，改完即时生效）。
+    """
+    import sqlite3
+
+    db = pathlib.Path(__file__).resolve().parent / "backend" / "data" / "app.db"
+    if not db.exists():
+        print(f"  ⚠️ 用户库不存在：{db}（先启动后端并注册账号）")
+        return
+    conn = sqlite3.connect(db)
+    try:
+        cur = conn.execute("SELECT role FROM users WHERE username=?", (username,))
+        row = cur.fetchone()
+        if row is None:
+            print(f"  ⚠️ 账号 {username} 不存在，先注册")
+            return
+        if row[0] == "管理员":
+            print(f"  · {username} 已是管理员")
+            return
+        conn.execute("UPDATE users SET role='管理员' WHERE username=?", (username,))
+        conn.commit()
+        print(f"  ✅ {username} 角色 {row[0]} → 管理员")
+    finally:
+        conn.close()
 
 
 def warm_asset(base: str, token: str) -> None:

@@ -121,16 +121,28 @@ export function listAds() {
   return request.get('/ads')
 }
 
-// ---------- 广告投放（Mock 模拟） ----------
+// ---------- 广告投放 ----------
+// 注意：只有「巨量千川」有真实投递 Agent（real_ready），其余三个平台是预留位（reserved）。
+// 后端对 reserved 平台的 /delivery/submit 返回 501，前端据 capability 置灰按钮。
 
-/** 可投放的目标平台列表（巨量千川 / 小红书 / 抖音…） */
+/** 可投放的目标平台列表（含 capability：real_ready / reserved） */
 export function listDeliveryPlatforms() {
   return request.get('/delivery/platforms')
 }
 
-/** 一键投放：{ platform, ad_ids: [..], budget } → mock 投放结果（预算超出区间会被拦截） */
+/** 各平台投递 Agent 的能力与「还缺什么」（前端渲染按钮状态与提示） */
+export function getDeliveryCapabilities() {
+  return request.get('/delivery/capabilities')
+}
+
+/** 一键投放：{ platform, ad_ids: [..], budget } → 真实/模拟投放结果（预算超出区间会被拦截） */
 export function submitDelivery(payload) {
   return request.post('/delivery/submit', payload)
+}
+
+/** 关停某物料已投放的计划（真实投放的安全网）：{ ad_id } */
+export function stopDelivery(payload) {
+  return request.post('/delivery/stop', payload)
 }
 
 /** 历史投放批次记录 */

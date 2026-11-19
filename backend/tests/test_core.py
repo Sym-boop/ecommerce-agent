@@ -1665,7 +1665,7 @@ class TestMetricsIngest(unittest.TestCase):
         from app.common import json_store, metrics_ingest
 
         cls.mi = metrics_ingest
-        cls._orig_dir = json_store.DATA_DIR
+        cls._orig_dir = _json_store.DATA_DIR
         cls._tmp = tempfile.mkdtemp(prefix="metrics_test_")
         json_store.DATA_DIR = Path(cls._tmp)
         (Path(cls._tmp) / "metrics").mkdir(parents=True, exist_ok=True)
@@ -1674,7 +1674,7 @@ class TestMetricsIngest(unittest.TestCase):
     def tearDownClass(cls):
         from app.common import json_store
 
-        json_store.DATA_DIR = cls._orig_dir
+        _json_store.DATA_DIR = cls._orig_dir
         shutil.rmtree(cls._tmp, ignore_errors=True)
 
     def setUp(self):
@@ -1956,7 +1956,7 @@ class TestTokenUsage(unittest.TestCase):
         from app.common import json_store, token_usage
 
         cls.tu = token_usage
-        cls._orig_dir = json_store.DATA_DIR
+        cls._orig_dir = _json_store.DATA_DIR
         cls._tmp = tempfile.mkdtemp(prefix="token_")
         json_store.DATA_DIR = Path(cls._tmp)
 
@@ -1964,7 +1964,7 @@ class TestTokenUsage(unittest.TestCase):
     def tearDownClass(cls):
         from app.common import json_store
 
-        json_store.DATA_DIR = cls._orig_dir
+        _json_store.DATA_DIR = cls._orig_dir
         shutil.rmtree(cls._tmp, ignore_errors=True)
 
     def setUp(self):
@@ -2407,3 +2407,212 @@ class TestApprovalPersistence(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+# ---------------------------------------------------------------------------
+# 投放：能力标注 / 未接入平台必须拒绝 / 幂等 / 停投
+# ---------------------------------------------------------------------------
+class TestDeliveryCapability(unittest.TestCase):
+    """投放页「不再编数」的回归测试。
+
+    背景：原实现给四个平台统一返回「随机 95% 成功 + 随机触达 2000~50000」的模拟回执，
+    既承认是 mock 又编了数据。这里锁死三件事：
+
+        1. 未接入平台（reserved）→ 后端必须 501，不能悄悄返回成功
+        2. 千川投放记录里不得出现随机触达数
+        3. 同一物料重复投放必须跳过（避免重复建真实计划、重复扣费）
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import os as _os
+        from pathlib import Path as _Path
+
+        cls._orig_dir = _json_store.DATA_DIR
+        cls._tmp = tempfile.mkdtemp(prefix="dsh_delivery_")
+        _json_store.DATA_DIR = _Path(cls._tmp)
+        # token 落盘也指向临时目录，别污染真实 data/
+        cls._orig_token_file = _os.environ.get("QIANCHUAN_TOKEN_FILE")
+        _os.environ["QIANCHUAN_TOKEN_FILE"] = str(_Path(cls._tmp) / "qianchuan_token.json")
+
+        # mcp_servers 是仓库根下的包，测试只把 backend 加进了 sys.path
+        if str(_ROOT) not in sys.path:
+            sys.path.insert(0, str(_ROOT))
+
+        from app.api import delivery_router as dr
+        from app.common import ad_store, store_store
+
+        cls.dr = dr
+        cls.ad_store = ad_store
+        cls.store_store = store_store
+        # 清空模块级缓存，避免继承别的测试留下的批次
+        dr._DELIVERIES.clear()
+
+    @classmethod
+    def tearDownClass(cls):
+        import os as _os
+
+        _json_store.DATA_DIR = cls._orig_dir
+        if cls._orig_token_file is None:
+            _os.environ.pop("QIANCHUAN_TOKEN_FILE", None)
+        else:
+            _os.environ["QIANCHUAN_TOKEN_FILE"] = cls._orig_token_file
+        shutil.rmtree(cls._tmp, ignore_errors=True)
+
+    def setUp(self):
+        self.dr._DELIVERIES.clear()
+        # 登记一个千川店铺，并准备一条「已审批通过」的物料
+        self.store_store.add_store("qianchuan", {
+            "shop_id": "S-DEMO-1", "aweme_id": "AW-DEMO-1",
+            "advertiser_id": "1800000001",
+            "products": [{"product_id": "P-DEMO-1", "name": "测试商品"}],
+        })
+        self.ad = self.ad_store.add_ad(
+            ad_type="copy", title="测试物料-投放", platform="xiaohongshu",
+            stage="approved", dedupe=False,
+        )
+
+    # ---------- 能力标注 ----------
+    def test_reserved_platform_has_capability_flag(self):
+        """四个平台必须都带 capability，且只有千川是 real_ready。"""
+        caps = {p["value"]: p["capability"] for p in self.dr.DELIVERY_PLATFORMS}
+        self.assertEqual(caps["qianchuan"], "real_ready")
+        for key in ("juguang", "alimama", "duoduo"):
+            self.assertEqual(caps[key], "reserved", f"{key} 应为预留位")
+
+    def test_placeholder_token_is_not_authorized(self):
+        """`***` 占位符不能被当成已授权。
+
+        坑：`bool("***")` 是 True，会把「未配置」误报成「已授权」。
+        必须用 `is_real()` 判断。
+        """
+        from app.agent import douyin_delivery_agent as agent
+
+        old = os.environ.get("QIANCHUAN_ACCESS_TOKEN")
+        try:
+            os.environ["QIANCHUAN_ACCESS_TOKEN"] = "***"
+            self.assertFalse(agent.capability()["authorized"])
+        finally:
+            if old is None:
+                os.environ.pop("QIANCHUAN_ACCESS_TOKEN", None)
+            else:
+                os.environ["QIANCHUAN_ACCESS_TOKEN"] = old
+
+    # ---------- 未接入平台 ----------
+    def test_reserved_platform_submit_returns_501(self):
+        """投到阿里妈妈必须 501，而不是返回一个假的成功回执。"""
+        import asyncio
+
+        resp = asyncio.run(self.dr.submit_delivery({
+            "platform": "alimama", "ad_ids": [self.ad["id"]], "budget": 5000,
+        }))
+        self.assertEqual(resp.status_code, 501)
+        self.assertIn("尚未接入", json.loads(resp.body.decode("utf-8"))["msg"])
+
+    # ---------- 千川投放 ----------
+    def test_qianchuan_submit_has_no_random_reach(self):
+        """投放记录里不得有编造的触达数，且要记下真实模式。"""
+        import asyncio
+
+        resp = asyncio.run(self.dr.submit_delivery({
+            "platform": "qianchuan", "ad_ids": [self.ad["id"]], "budget": 5000,
+        }))
+        # 失败路径返回 JSONResponse（有 status_code），成功路径返回 ok() 包装的 dict
+        self.assertFalse(hasattr(resp, "status_code"), "正常投放不应走错误分支")
+        data = resp["data"]
+        self.assertEqual(data["platform"], "qianchuan")
+        item = data["items"][0]
+        self.assertIn("reach", item)
+        self.assertIsNone(item["reach"], "触达数必须为 None，不能是随机数")
+        self.assertEqual(item["status"], "success")
+        self.assertTrue(item["ad_promotion_id"])
+        self.assertIn(data["mode"], ("mock", "real"))
+
+    def test_submit_is_idempotent(self):
+        """同一物料重复投放必须跳过，不能建第二个计划。"""
+        import asyncio
+
+        first = asyncio.run(self.dr.submit_delivery({
+            "platform": "qianchuan", "ad_ids": [self.ad["id"]], "budget": 5000,
+        }))
+        first_data = first["data"]
+        plan_id = first_data["items"][0]["ad_promotion_id"]
+
+        second = asyncio.run(self.dr.submit_delivery({
+            "platform": "qianchuan", "ad_ids": [self.ad["id"]], "budget": 5000,
+        }))
+        second_data = second["data"]
+        item = second_data["items"][0]
+        self.assertEqual(item["status"], "skipped")
+        self.assertEqual(item["ad_promotion_id"], plan_id)
+        self.assertEqual(second_data["success_count"], 0)
+
+    # ---------- 停投 ----------
+    def test_stop_without_plan_id_returns_400(self):
+        """没投过的物料不能关停（没有计划 ID 可停）。"""
+        import asyncio
+
+        resp = asyncio.run(self.dr.stop_delivery({"ad_id": self.ad["id"]}))
+        self.assertEqual(resp.status_code, 400)
+
+    def test_stop_with_plan_id_succeeds(self):
+        """投过的物料可以关停——这是真实投放的安全网。"""
+        import asyncio
+
+        asyncio.run(self.dr.submit_delivery({
+            "platform": "qianchuan", "ad_ids": [self.ad["id"]], "budget": 5000,
+        }))
+        resp = asyncio.run(self.dr.stop_delivery({"ad_id": self.ad["id"]}))
+        data = resp["data"]
+        self.assertTrue(data["stopped"])
+        self.assertTrue(data["ad_promotion_id"])
+
+
+class TestQianchuanTokenStore(unittest.TestCase):
+    """token 持久化与续期判定。
+
+    原来 `refresh_access_token()` 拿到新 token 后没人保存，等于续了个寂寞。
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.mkdtemp(prefix="dsh_qc_token_")
+        self._orig = os.environ.get("QIANCHUAN_TOKEN_FILE")
+        os.environ["QIANCHUAN_TOKEN_FILE"] = str(Path(self._tmp) / "token.json")
+        if str(_ROOT) not in sys.path:
+            sys.path.insert(0, str(_ROOT))
+        from mcp_servers.douyin import token_store
+
+        self.ts = token_store
+
+    def tearDown(self):
+        if self._orig is None:
+            os.environ.pop("QIANCHUAN_TOKEN_FILE", None)
+        else:
+            os.environ["QIANCHUAN_TOKEN_FILE"] = self._orig
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def test_save_and_load_roundtrip(self):
+        self.ts.save("at-123", "rt-456", expires_in=3600, advertiser_id="1800", source="oauth")
+        doc = self.ts.load()
+        self.assertEqual(doc["access_token"], "at-123")
+        self.assertEqual(doc["refresh_token"], "rt-456")
+        self.assertEqual(doc["advertiser_id"], "1800")
+        self.assertEqual(doc["source"], "oauth")
+
+    def test_needs_refresh_when_almost_expired(self):
+        self.ts.save("at-x", "rt-x", expires_in=10)      # 10 秒后过期 < 安全余量
+        self.assertTrue(self.ts.needs_refresh())
+
+    def test_no_refresh_when_fresh(self):
+        self.ts.save("at-y", "rt-y", expires_in=7200)
+        self.assertFalse(self.ts.needs_refresh())
+
+    def test_no_refresh_without_refresh_token(self):
+        self.ts.save("at-z", "", expires_in=10)
+        self.assertFalse(self.ts.needs_refresh(), "没有 refresh_token 时不该尝试续期")
+
+    def test_status_is_maskd(self):
+        self.ts.save("at-secret-value", "rt-secret", expires_in=3600)
+        st = self.ts.status()
+        self.assertTrue(st["authorized"])
+        self.assertNotIn("at-secret-value", json.dumps(st), "status 不能返回 token 明文")

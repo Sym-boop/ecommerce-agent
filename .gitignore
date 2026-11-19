@@ -98,3 +98,9 @@ C?Users*
 data/approvals.json
 data/adgen_sessions.json
 data/quality_evals.json
+
+# ===== 运行时数据（含密码哈希，绝不入库）=====
+backend/data/app.db
+backend/data/media/
+data/stores/
+data/adgen_sessions.json

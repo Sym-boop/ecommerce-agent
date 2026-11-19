@@ -1,26 +1,32 @@
-"""广告投放 API（Mock 模拟）。
+"""广告投放 API。
 
-四大投放平台（收敛自原 9 个 mock 平台），每个平台含品牌主题色、浅色背景与介绍：
-    qianchuan  巨量千川（抖音）
-    juguang    聚光（小红书）
-    alimama    阿里妈妈（淘宝/天猫）
-    duoduo     多多进宝（拼多多）
+**重要：这里的「投放」分两种，不要混**
+
+| 平台 | capability | 实际行为 |
+|---|---|---|
+| 巨量千川 | `real_ready` | 走 `douyin_delivery_agent`：预检 → 提交 → 记真实计划 ID；模式由 `QIANCHUAN_DELIVERY_MODE` 决定（默认 mock） |
+| 聚光 / 阿里妈妈 / 多多进宝 | `reserved` | **没有实现**。接口直接返回 501，按钮在前端置灰 |
+
+为什么这么改（历史问题）：原实现给四个平台统一发「随机 95% 成功 + 随机触达 2000~50000」的
+模拟回执，页面上还写着 Mock。结果是**既承认是模拟，又编了成功率和触达量**——
+面试官一句「触达数据从哪来」就崩，而且这种半真半假比纯 mock 更伤可信度。
+
+现在的原则：**要么真，要么明说没有。不编数。**
 
 端点：
-    GET  /api/v1/delivery/platforms                可投放平台列表（含介绍 / 主题色）
-    GET  /api/v1/delivery/platforms/{key}          某平台详细介绍
-    GET  /api/v1/delivery/platforms/{key}/ads      该平台的「未投放广告」与「投放历史广告」
-    GET  /api/v1/delivery/platforms/{key}/deliveries 该平台的历史投放批次
-    GET  /api/v1/delivery/config                   预算审查区间配置
-    GET  /api/v1/delivery/list                     全部历史投放批次
-    POST /api/v1/delivery/submit                   一键投放（仅允许 stage=approved）
-
-投放成功后会把对应广告在 ad_store 中标记为已投放（stage=delivered）。
-本模块以 Mock 方式模拟第三方平台返回，不产生真实投放。
+    GET    /platforms                    平台列表（含 capability）
+    GET    /capabilities                 各平台 Agent 能力与缺什么（前端横幅用）
+    GET    /platforms/{key}              平台详情与投放概况
+    GET    /platforms/{key}/ads          该平台可选 / 已投放广告
+    GET    /platforms/{key}/deliveries   该平台历史批次
+    GET    /config                       预算区间配置
+    GET    /list                         全部历史批次
+    POST   /submit                       一键投放（仅 real_ready 平台）
+    POST   /stop                         关停已投放计划（安全网）
+    DELETE /platforms/{key}/ads/{ad_id}  删除物料
 """
 from __future__ import annotations
 
-import random
 import threading
 import uuid
 from datetime import datetime
@@ -28,12 +34,15 @@ from datetime import datetime
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from app.common import ad_store, json_store
+from app.agent import douyin_delivery_agent
+from app.common import ad_store, json_store, store_store
 from app.common.pipeline import MIN_BUDGET, MAX_BUDGET, budget_verdict
 
 router = APIRouter(prefix="/api/v1/delivery", tags=["delivery"])
 
-# 四大投放平台（theme_color 为品牌主色，bg_color 为界面浅色背景）
+# 四大投放平台。capability 决定前端按钮能否点、后端是否放行：
+#   real_ready  有真实代码路径（可能因未授权而走 mock，但链路是真的）
+#   reserved    仅展示位，没有实现
 DELIVERY_PLATFORMS = [
     {
         "value": "qianchuan",
@@ -43,11 +52,11 @@ DELIVERY_PLATFORMS = [
         "theme_color": "#161823",
         "bg_color": "#f5f6f8",
         "logo_key": "douyin",
+        "capability": "real_ready",
         "intro": "抖音电商官方一体化智能营销平台，覆盖直播、短视频、搜索与商城全场景投放。",
         "features": ["全域推广", "直播间直投", "短视频带货", "智能出价"],
         "detail": (
             "巨量千川是抖音电商面向商家的智能营销平台，整合广告投放、直播间引流与商品推广能力。"
-            "依托抖音的超大流量池与推荐算法，可将广告精准分发给潜在消费人群。"
             "支持「极速推广」与「专业推广」两种模式：前者一键托管、适合新手；"
             "后者可自定义人群包、出价与创意组合，适合精细化运营的成熟商家。"
         ),
@@ -60,13 +69,12 @@ DELIVERY_PLATFORMS = [
         "theme_color": "#ff2442",
         "bg_color": "#fff5f6",
         "logo_key": "xiaohongshu",
+        "capability": "reserved",
         "intro": "小红书官方商业化广告平台，以真人笔记与搜索场景驱动高转化的种草投放。",
         "features": ["笔记加热", "搜索推广", "人群定向", "达人合作"],
         "detail": (
             "聚光平台是小红书面向品牌与商家的商业化投放工具，核心在于「内容种草 + 搜索承接」。"
-            "通过信息流笔记推广与搜索关键词竞价，把优质种草内容推送给高意向用户。"
-            "平台强调真实、有温度的社区内容，适合美妆、服饰、家居等决策链路较长的品类，"
-            "配合蒲公英达人合作可实现从种草到成交的闭环。"
+            "**本平台投递 Agent 尚未接入**，当前仅作为平台信息展示位。"
         ),
     },
     {
@@ -77,13 +85,13 @@ DELIVERY_PLATFORMS = [
         "theme_color": "#ff6a00",
         "bg_color": "#fff8f2",
         "logo_key": "alimama",
+        "capability": "reserved",
         "intro": "阿里巴巴旗下数字营销平台，覆盖淘宝天猫站内搜索、展示与推荐场景。",
         "features": ["万相台", "直通车", "引力魔方", "品牌广告"],
         "detail": (
             "阿里妈妈是阿里巴巴集团统一的数字营销平台，串联淘宝、天猫的搜索、展示与推荐流量。"
-            "旗下「万相台无界版」整合直通车、引力魔方等产品，可一站式完成新品冷启动、"
-            "爆款拉新与店铺复购运营。依托阿里电商数据资产，实现从曝光到成交的品效合一，"
-            "是淘系商家日常投放的主力阵地。"
+            "**本平台投递 Agent 尚未接入**，当前仅作为平台信息展示位。"
+            "阿里妈妈走服务商体系（企业主体 + 服务商资质 + 保证金），个人开发者无法对接。"
         ),
     },
     {
@@ -94,13 +102,12 @@ DELIVERY_PLATFORMS = [
         "theme_color": "#e02e24",
         "bg_color": "#fff5f4",
         "logo_key": "pinduoduo",
+        "capability": "reserved",
         "intro": "拼多多官方推广平台，以高性价比流量与社交裂变助力商品快速起量。",
         "features": ["多多搜索", "多多场景", "百亿补贴", "拼团裂变"],
         "detail": (
             "多多进宝是拼多多面向商家的推广平台，包含「多多搜索」与「多多场景」两大核心工具。"
-            "搜索版聚焦关键词竞价、精准承接购买意图；场景版覆盖推荐信息流，助力商品快速积累销量与评价。"
-            "结合百亿补贴与拼团玩法，可在低价心智人群中实现高性价比的爆发式起量，"
-            "尤其适合白牌与产业带商家。"
+            "**本平台投递 Agent 尚未接入**，当前仅作为平台信息展示位。"
         ),
     },
 ]
@@ -137,8 +144,31 @@ def _platform_or_none(key: str) -> dict | None:
 
 @router.get("/platforms")
 async def list_platforms():
-    """返回可投放的四大平台列表（含介绍 / 主题色 / 品牌归属）。"""
+    """可投放平台列表（含 capability：real_ready 可投 / reserved 仅展示）。"""
     return ok(DELIVERY_PLATFORMS)
+
+
+@router.get("/capabilities")
+async def capabilities():
+    """各平台投递 Agent 的能力与「还缺什么」。
+
+    前端用它在页头渲染提示：千川显示模式与缺项，其余显示「未接入」。
+    同时也是**面试时最有说服力的一段**——差在哪写死在接口里，不是口头解释。
+    """
+    result = []
+    for p in DELIVERY_PLATFORMS:
+        if p["capability"] == "real_ready":
+            info = douyin_delivery_agent.capability()
+        else:
+            info = {
+                "agent": None,
+                "capability": "reserved",
+                "mode": None,
+                "authorized": False,
+                "blockers": ["该平台投递 Agent 未实现（仅平台信息展示位）"],
+            }
+        result.append({"platform": p["value"], "label": p["label"], **info})
+    return ok(result)
 
 
 @router.get("/platforms/{key}")
@@ -214,9 +244,49 @@ async def list_deliveries():
         return ok(list(_DELIVERIES))
 
 
+# ---------------------------------------------------------------------------
+# 投放
+# ---------------------------------------------------------------------------
+def _default_store() -> dict:
+    """取已登记的千川店铺（前端只传平台+物料+预算，其余参数从登记信息补齐）。"""
+    stores = store_store.list_stores("qianchuan")
+    return stores[0] if stores else {}
+
+
+def _build_qianchuan_payload(ad: dict, body: dict, budget: float) -> dict:
+    """把「物料 + 请求参数 + 已登记店铺」拼成千川提交参数。
+
+    前端只传 platform / ad_ids / budget（见 DeliveryCenter.vue），
+    所以这里要从登记店铺补 shop_id / product_id / aweme_id，
+    再从物料补素材与标题。缺哪个由预检报出来，**不在这里瞎填默认值**。
+    """
+    store = _default_store()
+    products = store.get("products") or []
+    first_product = products[0] if products else {}
+    return {
+        "advertiser_id": body.get("advertiser_id") or store.get("advertiser_id", ""),
+        "shop_id": body.get("shop_id") or store.get("shop_id", ""),
+        "product_id": body.get("product_id") or first_product.get("product_id", ""),
+        "aweme_id": body.get("aweme_id") or store.get("aweme_id", ""),
+        "image_id": body.get("image_id") or "",
+        "video_id": body.get("video_id") or "",
+        "marketing_goal": body.get("marketing_goal") or "短视频带货",
+        "budget": budget,
+        "bid": body.get("bid"),
+        "roi_goal": body.get("roi_goal"),
+        "name": body.get("name") or f"{ad.get('title') or '未命名素材'}-投放",
+    }
+
+
 @router.post("/submit")
 async def submit_delivery(payload: dict | None = None):
-    """一键投放：把勾选的广告投递到目标平台（Mock），投放前先做预算审查。"""
+    """一键投放。
+
+    - `reserved` 平台 → **501**，不做任何模拟（前端按钮本就是置灰的）
+    - `real_ready` 平台 → 走投递 Agent：预检 → 提交 → 记录真实结果
+    - **幂等**：同一物料已在该平台投过（有 platform_plan_id）则跳过，返回原计划 ID，
+      避免重复提交产生多条真实计划、重复扣费
+    """
     body = payload or {}
     platform = str(body.get("platform") or "").strip()
     ad_ids = [str(a) for a in (body.get("ad_ids") or []) if str(a).strip()]
@@ -225,10 +295,12 @@ async def submit_delivery(payload: dict | None = None):
     meta = _platform_or_none(platform)
     if meta is None:
         return fail(400, "请选择有效的目标平台")
+    if meta["capability"] != "real_ready":
+        return fail(501, f"「{meta['label']}」投递 Agent 尚未接入，当前仅支持巨量千川")
     if not ad_ids:
         return fail(400, "请至少勾选一条广告物料")
 
-    # ★ 预算审查：必填且在合理区间内
+    # 预算审查：必填且在合理区间内
     try:
         budget = float(raw_budget)
     except (TypeError, ValueError):
@@ -239,14 +311,11 @@ async def submit_delivery(payload: dict | None = None):
     if verdict != "normal":
         return fail(400, f"投放预算审查未通过：{verdict_msg}")
 
-    # 取出待投放的广告物料（以 ad_store 为准）；仅允许审批通过（stage=approved）的物料
     catalog = {ad["id"]: ad for ad in ad_store.list_ads()}
     missing = [a for a in ad_ids if a not in catalog]
     if missing:
         return fail(404, "勾选的广告物料不存在")
     selected = [catalog[a] for a in ad_ids]
-    # 允许「已审批通过」的物料投放，也允许「已投放」的物料再次投放；
-    # 其余阶段（审查中 / 待审批 / 已驳回）一律拦截。
     allowed_stages = {"approved", "delivered"}
     blocked = [ad["id"] for ad in selected if ad.get("stage") not in allowed_stages]
     if blocked:
@@ -258,24 +327,59 @@ async def submit_delivery(payload: dict | None = None):
     items: list[dict] = []
     success_ids: list[str] = []
     for ad in selected:
-        deliver_id = f"{platform.upper()[:4]}-{uuid.uuid4().hex[:8].upper()}"
-        # Mock：绝大多数投放成功，偶发失败以贴近真实平台
-        success = random.random() > 0.05
-        item = {
-            "ad_id": ad["id"],
-            "ad_type": ad.get("type", ""),
-            "title": ad.get("title", ""),
-            "status": "success" if success else "failed",
-            "deliver_id": deliver_id if success else None,
-            "reach": random.randint(2000, 50000) if success else 0,
-            "error": None if success else "Mock：平台侧审核未通过，请稍后重试",
-        }
-        items.append(item)
-        if success:
-            success_ids.append(ad["id"])
+        # 幂等：已投过且有平台计划 ID → 跳过，不再真实提交
+        if ad.get("delivery_platform") == platform and ad.get("platform_plan_id"):
+            items.append({
+                "ad_id": ad["id"], "ad_type": ad.get("type", ""), "title": ad.get("title", ""),
+                "status": "skipped", "ad_promotion_id": ad["platform_plan_id"],
+                "reason": "该物料已在此平台投放，跳过以避免重复建计划",
+            })
+            continue
 
-    # 投放成功的广告在物料仓库中标记为已投放（进入「历史广告发售」）
-    ad_store.mark_delivered(success_ids, platform=platform)
+        qc_payload = _build_qianchuan_payload(ad, body, budget)
+        try:
+            result = await douyin_delivery_agent.deliver(qc_payload)
+        except Exception as exc:  # noqa: BLE001
+            items.append({
+                "ad_id": ad["id"], "ad_type": ad.get("type", ""), "title": ad.get("title", ""),
+                "status": "failed", "ad_promotion_id": None,
+                "reason": f"{type(exc).__name__}: {exc}",
+            })
+            continue
+
+        if not result.get("submitted"):
+            pre = result.get("preflight") or {}
+            detail = "；".join(
+                f"{c['name']}:{c['detail']}" for c in (pre.get("checks") or []) if not c["ok"]
+            ) or result.get("reason", "预检未通过")
+            items.append({
+                "ad_id": ad["id"], "ad_type": ad.get("type", ""), "title": ad.get("title", ""),
+                "status": "failed", "ad_promotion_id": None,
+                "reason": f"预检未通过（{detail}）",
+            })
+            continue
+
+        plan_id = result.get("ad_promotion_id") or ""
+        items.append({
+            "ad_id": ad["id"], "ad_type": ad.get("type", ""), "title": ad.get("title", ""),
+            "status": "success",
+            "ad_promotion_id": plan_id,
+            "mode": result.get("mode"),
+            # 不编触达数：真实触达要么来自平台回报，要么就是没有
+            "reach": None,
+            "reason": None,
+        })
+        success_ids.append(ad["id"])
+        if plan_id:
+            ad_store.update_ad(
+                ad["id"],
+                platform_plan_id=plan_id,
+                delivery_mode=result.get("mode"),
+                delivered_at=submitted_at.isoformat(timespec="seconds"),
+            )
+
+    if success_ids:
+        ad_store.mark_delivered(success_ids, platform=platform)
 
     record = {
         "batch_id": batch_id,
@@ -283,16 +387,51 @@ async def submit_delivery(payload: dict | None = None):
         "platform_label": meta["label"],
         "platform_belong": meta["belong"],
         "platform_category": meta["category"],
-        "status": "已投放" if success_ids else "投放失败",
+        "mode": douyin_delivery_agent.capability().get("mode"),
+        "status": "已投放" if success_ids else ("已跳过" if items and all(
+            i["status"] == "skipped" for i in items) else "投放失败"),
         "submitted_at": submitted_at.isoformat(timespec="seconds"),
         "budget": budget,
         "budget_verdict": verdict,
         "budget_verdict_msg": verdict_msg,
         "items": items,
         "success_count": len(success_ids),
-        "failed_count": len(items) - len(success_ids),
+        "failed_count": sum(1 for i in items if i["status"] == "failed"),
+        "skipped_count": sum(1 for i in items if i["status"] == "skipped"),
     }
     with _LOCK:
         _DELIVERIES.insert(0, record)
         _persist_deliveries()
     return ok(record)
+
+
+@router.post("/stop")
+async def stop_delivery(payload: dict | None = None):
+    """关停某个物料已投放的计划。
+
+    真实投放的安全网：投错了要能立刻停，否则钱一直烧。
+    """
+    body = payload or {}
+    ad_id = str(body.get("ad_id") or "").strip()
+    if not ad_id:
+        return fail(400, "请提供 ad_id")
+    ad = ad_store.get_ad(ad_id)
+    if ad is None:
+        return fail(404, "广告物料不存在")
+    plan_id = str(ad.get("platform_plan_id") or "").strip()
+    if not plan_id:
+        return fail(400, "该物料没有平台计划 ID，无法关停（可能从未投放）")
+
+    try:
+        result = await douyin_delivery_agent.stop(plan_id)
+    except Exception as exc:  # noqa: BLE001
+        return fail(502, f"关停失败：{type(exc).__name__}: {exc}")
+
+    ad_store.update_ad(ad_id, delivery_status="stopped")
+    return ok({
+        "ad_id": ad_id,
+        "ad_promotion_id": plan_id,
+        "stopped": True,
+        "mode": douyin_delivery_agent.capability().get("mode"),
+        "result": result,
+    })

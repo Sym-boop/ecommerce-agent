@@ -262,6 +262,48 @@ async def qianchuan_submit_delivery(payload: dict | None = None) -> dict:
     return QianchuanClient().call(cfg["create_plan_path"], payload, method="POST")
 
 
+async def qianchuan_query_delivery(ad_promotion_id: str) -> dict:
+    """查询投放计划状态（投放后轮询审核/投放状态用）。"""
+    ad_promotion_id = (ad_promotion_id or "").strip()
+    if not ad_promotion_id:
+        raise ValueError("缺少 ad_promotion_id（投放计划 ID）")
+    if _mock_mode():
+        return {
+            "mock": True,
+            "ad_promotion_id": ad_promotion_id,
+            "status": "SUBMITTED",
+            "message": "mock 模式：未查询真实千川接口，返回本地占位状态",
+        }
+    cfg = qianchuan_config()
+    return QianchuanClient().call(
+        cfg["query_plan_path"], {"ad_ids": [ad_promotion_id]}, method="GET"
+    )
+
+
+async def qianchuan_stop_delivery(ad_promotion_id: str) -> dict:
+    """关停投放计划。
+
+    **这是真实投放的安全网**：没有它，一旦误投或预算填错，钱会一直烧，
+    只能去平台后台手点。原实现完全没有这个能力。
+    """
+    ad_promotion_id = (ad_promotion_id or "").strip()
+    if not ad_promotion_id:
+        raise ValueError("缺少 ad_promotion_id（投放计划 ID）")
+    if _mock_mode():
+        return {
+            "mock": True,
+            "ad_promotion_id": ad_promotion_id,
+            "status": "DELETED",
+            "message": "mock 模式：未真实关停千川计划",
+        }
+    cfg = qianchuan_config()
+    return QianchuanClient().call(
+        cfg["stop_plan_path"],
+        {"ad_ids": [ad_promotion_id], "opt_status": "DELETE"},
+        method="POST",
+    )
+
+
 __all__ = [
     "QianchuanAPIError",
     "DELIVERY_REQUIREMENTS",
@@ -271,4 +313,6 @@ __all__ = [
     "qianchuan_delivery_context",
     "qianchuan_delivery_preflight",
     "qianchuan_submit_delivery",
+    "qianchuan_query_delivery",
+    "qianchuan_stop_delivery",
 ]

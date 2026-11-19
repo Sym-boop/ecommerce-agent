@@ -1,5 +1,371 @@
 [
   {
+    "id": "EV-2d23e361de",
+    "at": "2026-11-19T11:13:33",
+    "ad_id": "",
+    "session_id": "AGEN-20261119-881256",
+    "source": "generation",
+    "actor": "",
+    "title": "薄纱上衣也太轻了吧！我连穿3天还想穿！",
+    "score": 80.0,
+    "platform": "xiaohongshu",
+    "metrics": {
+      "format_ok": true,
+      "violation_free": true,
+      "length_ok": true,
+      "tag_count_ok": true,
+      "length": 142,
+      "length_range": [
+        80,
+        1200
+      ],
+      "tag_count": 5,
+      "sell_point_coverage": 0.0,
+      "sell_points_covered": [],
+      "sell_points_missing": [
+        "轻便"
+      ],
+      "paragraphs": 2,
+      "emoji_count": 3,
+      "reference_count": 0
+    }
+  },
+  {
+    "id": "EV-286275d934",
+    "at": "2026-11-19T10:56:59",
+    "ad_id": "",
+    "session_id": "AGEN-20261119-881256",
+    "source": "generation",
+    "actor": "",
+    "title": "这件薄纱上衣也太轻了！30度出门像没穿一样舒服",
+    "score": 100.0,
+    "platform": "xiaohongshu",
+    "metrics": {
+      "format_ok": true,
+      "violation_free": true,
+      "length_ok": true,
+      "tag_count_ok": true,
+      "length": 225,
+      "length_range": [
+        80,
+        1200
+      ],
+      "tag_count": 5,
+      "sell_point_coverage": 1.0,
+      "sell_points_covered": [
+        "轻便"
+      ],
+      "sell_points_missing": [],
+      "paragraphs": 4,
+      "emoji_count": 4,
+      "reference_count": 0
+    }
+  },
+  {
+    "id": "EV-3ca2f3ed85",
+    "at": "2026-11-19T09:28:57",
+    "ad_id": "",
+    "session_id": "AGEN-20261119-6e17b2",
+    "source": "generation",
+    "actor": "",
+    "title": "500ml通勤杯！12小时保温+304不锈钢，打工人狂喜",
+    "score": 86.7,
+    "platform": "xiaohongshu",
+    "metrics": {
+      "format_ok": true,
+      "violation_free": true,
+      "length_ok": true,
+      "tag_count_ok": true,
+      "length": 240,
+      "length_range": [
+        80,
+        1200
+      ],
+      "tag_count": 5,
+      "sell_point_coverage": 0.3333,
+      "sell_points_covered": [
+        "500ml"
+      ],
+      "sell_points_missing": [
+        "12 小时保温",
+        "304 不锈钢"
+      ],
+      "paragraphs": 4,
+      "emoji_count": 4,
+      "reference_count": 0
+    }
+  },
+  {
+    "id": "EV-e0236c4658",
+    "at": "2026-11-19T09:28:29",
+    "ad_id": "",
+    "session_id": "AGEN-20261119-d2d213",
+    "source": "generation",
+    "actor": "",
+    "title": "12小时保温！500ml杯子陪我通勤半个月",
+    "score": 86.7,
+    "platform": "xiaohongshu",
+    "metrics": {
+      "format_ok": true,
+      "violation_free": true,
+      "length_ok": true,
+      "tag_count_ok": true,
+      "length": 195,
+      "length_range": [
+        80,
+        1200
+      ],
+      "tag_count": 5,
+      "sell_point_coverage": 0.3333,
+      "sell_points_covered": [
+        "500ml"
+      ],
+      "sell_points_missing": [
+        "12 小时保温",
+        "304 不锈钢"
+      ],
+      "paragraphs": 4,
+      "emoji_count": 2,
+      "reference_count": 0
+    }
+  },
+  {
+    "id": "EV-86e4bc4eba",
+    "at": "2026-11-19T09:25:37",
+    "ad_id": "",
+    "session_id": "AGEN-20261119-c580f5",
+    "source": "generation",
+    "actor": "",
+    "title": "12小时保温！通勤包里塞它太安心",
+    "score": 86.7,
+    "platform": "xiaohongshu",
+    "metrics": {
+      "format_ok": true,
+      "violation_free": true,
+      "length_ok": true,
+      "tag_count_ok": true,
+      "length": 223,
+      "length_range": [
+        80,
+        1200
+      ],
+      "tag_count": 5,
+      "sell_point_coverage": 0.3333,
+      "sell_points_covered": [
+        "500ml"
+      ],
+      "sell_points_missing": [
+        "12 小时保温",
+        "304 不锈钢"
+      ],
+      "paragraphs": 4,
+      "emoji_count": 4,
+      "reference_count": 0
+    }
+  },
+  {
+    "id": "EV-be2b08722e",
+    "at": "2026-11-19T09:12:44",
+    "ad_id": "",
+    "session_id": "AGEN-20261119-df23f6",
+    "source": "generation",
+    "actor": "",
+    "title": "12小时保温亲测！500ml便携杯我走哪带哪",
+    "score": 86.7,
+    "platform": "xiaohongshu",
+    "metrics": {
+      "format_ok": true,
+      "violation_free": true,
+      "length_ok": true,
+      "tag_count_ok": true,
+      "length": 155,
+      "length_range": [
+        80,
+        1200
+      ],
+      "tag_count": 5,
+      "sell_point_coverage": 0.3333,
+      "sell_points_covered": [
+        "500ml"
+      ],
+      "sell_points_missing": [
+        "12 小时保温",
+        "304 不锈钢"
+      ],
+      "paragraphs": 4,
+      "emoji_count": 3,
+      "reference_count": 0
+    }
+  },
+  {
+    "id": "EV-0a97b38fe0",
+    "at": "2026-11-19T09:07:51",
+    "ad_id": "",
+    "session_id": "AGEN-20261119-357da3",
+    "source": "generation",
+    "actor": "",
+    "title": "一天8杯水！这只保温杯让我主动喝水了",
+    "score": 80.0,
+    "platform": "xiaohongshu",
+    "metrics": {
+      "format_ok": true,
+      "violation_free": true,
+      "length_ok": true,
+      "tag_count_ok": true,
+      "length": 182,
+      "length_range": [
+        80,
+        1200
+      ],
+      "tag_count": 4,
+      "sell_point_coverage": 0.0,
+      "sell_points_covered": [],
+      "sell_points_missing": [
+        "100% 正品",
+        "绝对保温",
+        "顶级材质"
+      ],
+      "paragraphs": 4,
+      "emoji_count": 4,
+      "reference_count": 0
+    }
+  },
+  {
+    "id": "EV-c5139b985d",
+    "at": "2026-11-19T09:07:31",
+    "ad_id": "",
+    "session_id": "AGEN-20261119-3164d4",
+    "source": "generation",
+    "actor": "",
+    "title": "500ml随身杯！12小时保温有点东西",
+    "score": 86.7,
+    "platform": "xiaohongshu",
+    "metrics": {
+      "format_ok": true,
+      "violation_free": true,
+      "length_ok": true,
+      "tag_count_ok": true,
+      "length": 133,
+      "length_range": [
+        80,
+        1200
+      ],
+      "tag_count": 5,
+      "sell_point_coverage": 0.3333,
+      "sell_points_covered": [
+        "500ml"
+      ],
+      "sell_points_missing": [
+        "12 小时保温",
+        "304 不锈钢"
+      ],
+      "paragraphs": 3,
+      "emoji_count": 3,
+      "reference_count": 0
+    }
+  },
+  {
+    "id": "EV-57e29090c4",
+    "at": "2026-11-19T09:05:27",
+    "ad_id": "",
+    "session_id": "AGEN-20261119-4c7e48",
+    "source": "generation",
+    "actor": "",
+    "title": "Hook：地铁吵到耳鸣？我戴上它，世界瞬间静音😳",
+    "score": 90.0,
+    "platform": "tiktok",
+    "metrics": {
+      "format_ok": true,
+      "violation_free": true,
+      "length_ok": true,
+      "tag_count_ok": true,
+      "length": 186,
+      "length_range": [
+        60,
+        1500
+      ],
+      "tag_count": 3,
+      "sell_point_coverage": 0.5,
+      "sell_points_covered": [
+        "主动降噪"
+      ],
+      "sell_points_missing": [
+        "续航 30 小时"
+      ],
+      "paragraphs": 4,
+      "emoji_count": 3,
+      "reference_count": 0
+    }
+  },
+  {
+    "id": "EV-1d58080edd",
+    "at": "2026-11-19T09:05:16",
+    "ad_id": "",
+    "session_id": "AGEN-20261119-d86ed6",
+    "source": "generation",
+    "actor": "",
+    "title": "通勤带它真省心！12小时保温+500ml够喝",
+    "score": 86.7,
+    "platform": "xiaohongshu",
+    "metrics": {
+      "format_ok": true,
+      "violation_free": true,
+      "length_ok": true,
+      "tag_count_ok": true,
+      "length": 170,
+      "length_range": [
+        80,
+        1200
+      ],
+      "tag_count": 4,
+      "sell_point_coverage": 0.3333,
+      "sell_points_covered": [
+        "500ml"
+      ],
+      "sell_points_missing": [
+        "12 小时保温",
+        "304 不锈钢"
+      ],
+      "paragraphs": 3,
+      "emoji_count": 3,
+      "reference_count": 0
+    }
+  },
+  {
+    "id": "EV-97359a07b5",
+    "at": "2026-11-19T09:04:05",
+    "ad_id": "",
+    "session_id": "AGEN-20261119-d7e745",
+    "source": "generation",
+    "actor": "",
+    "title": "早八通勤带它！12小时保温+500ml真的省心🔥",
+    "score": 86.7,
+    "platform": "xiaohongshu",
+    "metrics": {
+      "format_ok": true,
+      "violation_free": true,
+      "length_ok": true,
+      "tag_count_ok": true,
+      "length": 177,
+      "length_range": [
+        80,
+        1200
+      ],
+      "tag_count": 5,
+      "sell_point_coverage": 0.3333,
+      "sell_points_covered": [
+        "500ml"
+      ],
+      "sell_points_missing": [
+        "12 小时保温",
+        "304 不锈钢"
+      ],
+      "paragraphs": 3,
+      "emoji_count": 4,
+      "reference_count": 0
+    }
+  },
+  {
     "id": "EV-1398cc9be0",
     "at": "2026-10-15T11:49:05",
     "ad_id": "",

@@ -9,7 +9,8 @@
         <div>
           <h1 class="gen-hero-title">广告投放</h1>
           <p class="gen-hero-desc">
-            选择目标平台，进入平台投放台：投放广告、查看投放历史、了解平台介绍。投放为 Mock 模拟，不产生真实扣费。
+            选择目标平台，进入平台投放台：投放广告、查看投放历史、了解平台介绍。
+            <b>当前仅「巨量千川」具备投递 Agent</b>（默认 mock 模式，不产生真实扣费）；其余平台为预留位，按钮置灰。
           </p>
         </div>
       </div>
@@ -35,7 +36,9 @@
             <span v-for="f in p.features" :key="f" class="feature-chip">{{ f }}</span>
           </div>
           <div class="platform-card-foot">
-            <span class="enter-text">进入投放台</span>
+            <span class="enter-text">
+              {{ p.capability === 'real_ready' ? '进入投放台' : '仅查看介绍（未接入）' }}
+            </span>
             <el-icon><ArrowRight /></el-icon>
           </div>
         </div>
@@ -131,7 +134,7 @@
                       :loading="simulatingId === s.id"
                       @click="simulateStore(s)"
                     >
-                      模拟投递检测
+                      投递预检
                     </el-button>
                     <el-button
                       size="small"
@@ -154,7 +157,7 @@
                     {{ simulateResult.ready ? '可以投递' : '不可投递' }}
                   </el-tag>
                   <span>
-                    模拟投递检测（{{ simulateResult.mode }} 模式）
+                    投递预检（{{ simulateResult.mode }} 模式）
                     <template v-if="simulateResult.store"> · 店铺 {{ simulateResult.store.name }}</template>
                   </span>
                   <el-button class="preflight-close" size="small" text :icon="Close" @click="simulateResult = null" />
@@ -284,10 +287,27 @@
                 </label>
               </div>
 
+              <el-alert
+                v-if="capabilityHint"
+                class="capability-hint"
+                :title="capabilityHint"
+                :type="canDeliver ? (capabilities[current.value.value]?.mode === 'real' ? 'success' : 'warning') : 'info'"
+                :closable="false"
+                show-icon
+              />
+              <ul
+                v-if="canDeliver && capabilities[current.value.value]?.blockers?.length"
+                class="blocker-list"
+              >
+                <li v-for="(b, i) in capabilities[current.value.value].blockers" :key="i">{{ b }}</li>
+              </ul>
+
               <div class="deliver-actions">
                 <el-button type="primary" size="large" :icon="Promotion" :loading="submitting"
-                  :disabled="selected.length === 0" @click="handleDeliver">
-                  {{ submitting ? '投放中…' : `一键投放到 ${current.label}（已选 ${selected.length}）` }}
+                  :disabled="selected.length === 0 || !canDeliver" @click="handleDeliver">
+                  {{ submitting ? '投放中…'
+                    : (canDeliver ? `一键投放到 ${current.label}（已选 ${selected.length}）`
+                                  : `${current.label} 投递 Agent 未接入`) }}
                 </el-button>
                 <el-button size="large" text @click="selected = []">清空选择</el-button>
               </div>
@@ -332,8 +352,12 @@
                   </div>
                   <div class="batch-items">
                     <span v-for="it in d.items" :key="it.ad_id" class="batch-item">
-                      <el-tag size="small" :type="it.status === 'success' ? 'success' : 'danger'" effect="plain">
-                        {{ it.status === 'success' ? '成功' : '失败' }}
+                      <el-tag
+                        size="small"
+                        :type="it.status === 'success' ? 'success' : (it.status === 'skipped' ? 'info' : 'danger')"
+                        effect="plain"
+                      >
+                        {{ it.status === 'success' ? '成功' : (it.status === 'skipped' ? '已跳过' : '失败') }}
                       </el-tag>
                       {{ it.title || it.ad_id }}
                     </span>
@@ -410,10 +434,10 @@ import {
 } from '@element-plus/icons-vue'
 import PlatformLogo from '@/components/PlatformLogo.vue'
 import {
-  listDeliveryPlatforms, getPlatformDetail, getPlatformAds, getPlatformDeliveries,
+  listDeliveryPlatforms,
+  getDeliveryCapabilities, getPlatformDetail, getPlatformAds, getPlatformDeliveries,
   submitDelivery, getDeliveryConfig, deletePlatformAd,
-  listStores, createStore, deleteStore, preflightQianchuan,
-} from '@/api'
+  listStores, createStore, deleteStore, preflightQianchuan,} from '@/api'
 import { formatTime, mediaUrl } from '@/utils/format'
 
 const TYPE_META = {
@@ -432,6 +456,8 @@ const tabs = [
 const platforms = ref([])
 const current = ref(null)
 const tab = ref('deliver')
+// 各平台投递 Agent 能力（real_ready / reserved）+ 千川还缺什么
+const capabilities = ref({})
 
 const availableAds = ref([])
 const historyAds = ref([])
@@ -442,7 +468,7 @@ const budgetConfig = ref(null)
 const submitting = ref(false)
 const latest = ref(null)
 
-// 店铺信息（按平台区分，落盘到 data/stores/<platform>.json）+ 模拟投递检测
+// 店铺信息（按平台区分，落盘到 data/stores/<platform>.json）+ 投递预检
 const stores = ref([])
 const storeDialog = ref(false)
 const savingStore = ref(false)
@@ -457,6 +483,18 @@ const heroStyle = computed(() => ({
   background: `linear-gradient(120deg, ${hexA(current.value.theme_color, 0.92)}, ${hexA(current.value.theme_color, 0.7)})`,
 }))
 const tagStyle = (p) => ({ color: p.theme_color, borderColor: p.theme_color + '66' })
+
+// 只有 real_ready 平台才允许点投放；reserved 平台后端也会返回 501，
+// 这里置灰是为了让用户不用点了才知道
+const canDeliver = computed(() => current.value?.capability === 'real_ready')
+// 千川当前模式的说明（mock 时明确提示不会真实扣费）
+const capabilityHint = computed(() => {
+  const info = capabilities.value[current.value?.value]
+  if (!info) return ''
+  if (current.value?.capability !== 'real_ready') return '该平台投递 Agent 未实现，仅作信息展示'
+  if (info.mode === 'real') return `真实投放模式（authorized=${info.authorized ? '是' : '否'}）`
+  return 'mock 模式：走真实预检与请求构造，但不提交到平台、不产生扣费'
+})
 const counts = computed(() => ({
   available: availableAds.value.length,
   history: historyAds.value.length,
@@ -476,6 +514,13 @@ async function fetchPlatforms() {
     platforms.value = (await listDeliveryPlatforms()) || []
   } catch {
     platforms.value = []
+  }
+  // 能力与「还缺什么」由后端给出，前端不猜
+  try {
+    const caps = (await getDeliveryCapabilities()) || []
+    capabilities.value = Object.fromEntries(caps.map((c) => [c.platform, c]))
+  } catch {
+    capabilities.value = {}
   }
 }
 
@@ -676,6 +721,22 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+
+/* 能力提示：明确「能投 / 未接入 / mock」三种状态，避免页面看起来像真投 */
+.capability-hint {
+  margin-bottom: 10px;
+}
+.blocker-list {
+  margin: 0 0 12px 18px;
+  padding: 0;
+  font-size: 12.5px;
+  line-height: 1.8;
+  color: var(--el-text-color-secondary);
+}
+.blocker-list li::marker {
+  color: var(--el-color-warning);
+}
+
 .delivery { border-radius: 12px; padding: 4px; transition: background 0.3s ease; }
 
 /* ===== 平台卡片（一级） ===== */

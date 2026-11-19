@@ -1,11 +1,36 @@
 [
   {
-    "id": "AD-20261013-774f3a",
+    "id": "AD-20261119-8c6605",
     "type": "copy",
-    "title": "学生党连帽卫衣！3 件轮着穿一周不重样😭",
-    "prompt": "连帽卫衣；学生党；学生党连帽卫衣！3 件轮着穿一周不重样😭",
+    "title": "【演示】通勤降噪耳机（预算超限）",
+    "prompt": "",
     "platform": "xiaohongshu",
-    "content": "最近入手了这件连帽卫衣，学生党真的会谢😭 早八套上就能出门，不用站在衣柜前发呆。版型是那种宽松但不邋遢的，帽子立起来也有型。\n\n面料软软糯糯，贴身穿不扎，上课坐两节大课也不觉得勒。我搭了牛仔裤、运动裤和半身裙，居然都能配一脸✨\n\n周五穿去图书馆还被同学问链接，心里偷偷乐。洗了三次没有起球，领口也没变形，这个价位对学生党很友好。宿舍姐妹试穿后直接一人一件，秋冬内搭外穿都省心。",
+    "content": "地铁上开降噪，整个世界都安静了，续航 30 小时。",
+    "input_image": null,
+    "result_url": null,
+    "budget": 260000,
+    "copy_ok": true,
+    "budget_ok": false,
+    "violations": [],
+    "budget_verdict": "over",
+    "budget_msg": "预算 260000 元超出上限 100000 元，需人工调低后再投",
+    "stage": "review",
+    "status": "published",
+    "review_unavailable": false,
+    "fingerprint": "a06062972a9fbfd2",
+    "generated_by": "",
+    "category": "蓝牙耳机",
+    "source": "ai",
+    "session_id": "",
+    "created_at": "2026-11-19T09:09:07"
+  },
+  {
+    "id": "AD-20261119-57502b",
+    "type": "copy",
+    "title": "【演示】全网最好的保温杯，100% 正品",
+    "prompt": "",
+    "platform": "xiaohongshu",
+    "content": "全网最好的保温杯，100% 正品保证，绝对保温 12 小时，顶级材质。",
     "input_image": null,
     "result_url": null,
     "budget": null,
@@ -13,16 +38,67 @@
     "budget_ok": true,
     "violations": [
       {
-        "word": "最",
-        "type": "违禁词",
-        "suggestion": ""
+        "word": "最好",
+        "type": "极限词",
+        "suggestion": "不错",
+        "context": "【演示】全网最好的保温杯，100",
+        "start": 6
+      },
+      {
+        "word": "100%",
+        "type": "虚假夸大",
+        "suggestion": "高比例",
+        "context": "网最好的保温杯，100% 正品 全网最好",
+        "start": 13
+      },
+      {
+        "word": "最好",
+        "type": "极限词",
+        "suggestion": "不错",
+        "context": "0% 正品 全网最好的保温杯，100",
+        "start": 23
+      },
+      {
+        "word": "100%",
+        "type": "虚假夸大",
+        "suggestion": "高比例",
+        "context": "网最好的保温杯，100% 正品保证，绝对",
+        "start": 30
+      },
+      {
+        "word": "正品保证",
+        "type": "虚假夸大",
+        "suggestion": "正品保障",
+        "context": "温杯，100% 正品保证，绝对保温 12",
+        "start": 35
+      },
+      {
+        "word": "绝对",
+        "type": "极限词",
+        "suggestion": "非常",
+        "context": "0% 正品保证，绝对保温 12 小时",
+        "start": 40
+      },
+      {
+        "word": "顶级",
+        "type": "极限词",
+        "suggestion": "高品质",
+        "context": "温 12 小时，顶级材质。",
+        "start": 51
       }
     ],
     "budget_verdict": "normal",
-    "budget_msg": "未设置投放预算（跳过预算审查）",
+    "budget_msg": "",
     "stage": "review",
     "status": "published",
-    "created_at": "2026-10-13T15:26:22"
+    "review_unavailable": false,
+    "fingerprint": "816479216300ce19",
+    "generated_by": "",
+    "category": "水杯",
+    "source": "ai",
+    "session_id": "",
+    "created_at": "2026-11-19T09:09:07",
+    "review_revalidated_at": "2026-11-19T09:09:29"
   },
   {
     "id": "AD-20261013-16df7e",
@@ -34,20 +110,25 @@
     "input_image": null,
     "result_url": null,
     "budget": null,
-    "copy_ok": false,
+    "copy_ok": true,
     "budget_ok": true,
-    "violations": [
-      {
-        "word": "最",
-        "type": "违禁词",
-        "suggestion": ""
-      }
-    ],
+    "violations": [],
     "budget_verdict": "normal",
     "budget_msg": "未设置投放预算（跳过预算审查）",
-    "stage": "review",
-    "status": "published",
-    "created_at": "2026-10-13T15:25:55"
+    "stage": "delivered",
+    "status": "delivered",
+    "created_at": "2026-10-13T15:25:55",
+    "fingerprint": "d55c6a771957f659",
+    "review_revalidated_at": "2026-11-19T09:02:29",
+    "review_unavailable": false,
+    "handled_at": "2026-11-19T14:26:10",
+    "handler": "demo",
+    "comment": "演示放行",
+    "platform_plan_id": "QCP-DEMO-0001",
+    "delivery_mode": "mock",
+    "delivered_at": "2026-11-19T14:26:16",
+    "delivery_platform": "qianchuan",
+    "delivery_status": "stopped"
   },
   {
     "id": "AD-20261009-06b097",
@@ -66,7 +147,8 @@
     "budget_msg": "",
     "stage": "delivered",
     "status": "delivered",
-    "created_at": "2026-10-09T11:16:59"
+    "created_at": "2026-10-09T11:16:59",
+    "fingerprint": "78fb6a2b1d19167e"
   },
   {
     "id": "AD-20261011-5304d3",
@@ -85,7 +167,8 @@
     "budget_msg": "",
     "stage": "delivered",
     "status": "delivered",
-    "created_at": "2026-10-11T13:16:59"
+    "created_at": "2026-10-11T13:16:59",
+    "fingerprint": "d0dd01ab18988dd0"
   },
   {
     "id": "AD-20261012-ce65df",
@@ -104,7 +187,8 @@
     "budget_msg": "",
     "stage": "delivered",
     "status": "delivered",
-    "created_at": "2026-10-12T14:16:59"
+    "created_at": "2026-10-12T14:16:59",
+    "fingerprint": "5f502b0ebd062b4f"
   },
   {
     "id": "AD-20261013-36c531",
@@ -123,6 +207,7 @@
     "budget_msg": "",
     "stage": "delivered",
     "status": "delivered",
-    "created_at": "2026-10-13T15:16:59"
+    "created_at": "2026-10-13T15:16:59",
+    "fingerprint": "f1447eb5508e5f56"
   }
 ]

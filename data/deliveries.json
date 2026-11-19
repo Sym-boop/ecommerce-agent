@@ -1,1 +1,56 @@
-[]
+[
+  {
+    "batch_id": "DLV-20261119-f18f8c",
+    "platform": "qianchuan",
+    "platform_label": "巨量千川",
+    "platform_belong": "抖音",
+    "platform_category": "短视频信息流",
+    "mode": "mock",
+    "status": "已跳过",
+    "submitted_at": "2026-11-19T14:26:16",
+    "budget": 5000.0,
+    "budget_verdict": "normal",
+    "budget_verdict_msg": "预算正常：处于 ¥1,000 ~ ¥100,000 合理区间",
+    "items": [
+      {
+        "ad_id": "AD-20261013-16df7e",
+        "ad_type": "copy",
+        "title": "学生党连帽卫衣！3 件轮着穿一周不重样😭",
+        "status": "skipped",
+        "ad_promotion_id": "QCP-DEMO-0001",
+        "reason": "该物料已在此平台投放，跳过以避免重复建计划"
+      }
+    ],
+    "success_count": 0,
+    "failed_count": 0,
+    "skipped_count": 1
+  },
+  {
+    "batch_id": "DLV-20261119-ebe4a9",
+    "platform": "qianchuan",
+    "platform_label": "巨量千川",
+    "platform_belong": "抖音",
+    "platform_category": "短视频信息流",
+    "mode": "mock",
+    "status": "已投放",
+    "submitted_at": "2026-11-19T14:26:16",
+    "budget": 5000.0,
+    "budget_verdict": "normal",
+    "budget_verdict_msg": "预算正常：处于 ¥1,000 ~ ¥100,000 合理区间",
+    "items": [
+      {
+        "ad_id": "AD-20261013-16df7e",
+        "ad_type": "copy",
+        "title": "学生党连帽卫衣！3 件轮着穿一周不重样😭",
+        "status": "success",
+        "ad_promotion_id": "QCP-DEMO-0001",
+        "mode": "mock",
+        "reach": null,
+        "reason": null
+      }
+    ],
+    "success_count": 1,
+    "failed_count": 0,
+    "skipped_count": 0
+  }
+]
