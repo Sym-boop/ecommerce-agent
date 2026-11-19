@@ -94,3 +94,7 @@ docs/presentation-guide.md
 # ===== 临时文件 =====
 # 误生成的临时文件（全角冒号路径）
 C?Users*
+演示操作手册.md
+data/approvals.json
+data/adgen_sessions.json
+data/quality_evals.json
