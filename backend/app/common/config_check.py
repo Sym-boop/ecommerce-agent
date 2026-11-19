@@ -95,9 +95,16 @@ def collect() -> dict[str, Any]:
     # ---- 视频 Agent ----
     vid_provider = os.getenv("VIDEO_PROVIDER", "kling").strip().lower()
     vid_key = os.getenv("VIDEO_API_KEY", "")
-    if _is_placeholder(vid_key):
+    if vid_provider in {"local", "ffmpeg", "offline"}:
+        # 本地合成通道：不需要 Key。必须在自检里说清「不是 AI 生成视频」，
+        # 否则很容易被理解成「视频能力已经接好了」。
+        item("VIDEO_PROVIDER", vid_provider, "ok",
+             "本地合成通道（内置 ffmpeg）：海报 → 缓慢推进 + 淡入淡出的 MP4，"
+             "不需要 Key；注意这是本地合成，不是 AI 生成视频")
+    elif _is_placeholder(vid_key):
         item("VIDEO_API_KEY", "(占位符)", "warn",
-             f"VIDEO_PROVIDER={vid_provider} 但未配置有效 Key，视频生成会失败（不影响文案链路）")
+             f"VIDEO_PROVIDER={vid_provider} 但未配置有效 Key，视频生成会失败"
+             "（不影响文案链路；如需本地出片可设 VIDEO_PROVIDER=local）")
     else:
         item("VIDEO_API_KEY", f"{vid_key[:8]}…", "ok", "已配置")
 

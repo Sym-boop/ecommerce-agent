@@ -2616,3 +2616,70 @@ class TestQianchuanTokenStore(unittest.TestCase):
         st = self.ts.status()
         self.assertTrue(st["authorized"])
         self.assertNotIn("at-secret-value", json.dumps(st), "status 不能返回 token 明文")
+
+class TestLocalVideoProvider(unittest.TestCase):
+    """本地合成视频通道（VIDEO_PROVIDER=local）。
+
+    背景：视频原来只有 kling / aliyun 两条付费通道，没 Key 直接报错，
+    演示时这一环完全没法展示。local 通道用 imageio-ffmpeg 内置的 ffmpeg
+    把海报合成为 MP4，不需要任何 Key。
+
+    **注意语义**：这是「本地合成」，不是 AI 生成视频。测试只验证
+    「能在没有 Key 的情况下产出可播放的 MP4」，不宣称它是模型能力。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(_ROOT))
+        from app.agent import video_generator as vg
+
+        cls.vg = vg
+        cls._orig = {k: os.environ.get(k) for k in
+                     ("VIDEO_PROVIDER", "VIDEO_API_KEY", "VIDEO_DURATION")}
+
+    @classmethod
+    def tearDownClass(cls):
+        for k, v in cls._orig.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def setUp(self):
+        if not self.vg.local_available():
+            self.skipTest("未安装 imageio-ffmpeg，跳过本地合成测试")
+        # 造一张 1080x1440 的纯色图，避免依赖仓库里的素材
+        from PIL import Image
+
+        self._tmp = tempfile.mkdtemp(prefix="dsh_video_")
+        self._img = os.path.join(self._tmp, "src.png")
+        Image.new("RGB", (1080, 1440), (245, 214, 214)).save(self._img)
+
+    def tearDown(self):
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def test_local_provider_needs_no_key(self):
+        """local 通道在没有 Key（占位符）时也必须能出片。"""
+        os.environ["VIDEO_PROVIDER"] = "local"
+        os.environ["VIDEO_API_KEY"] = "***"
+        out = self.vg.generate_short_video("测试", self._img, duration=2)
+        p = Path(out)
+        self.assertTrue(p.exists(), "应产出视频文件")
+        self.assertGreater(p.stat().st_size, 1000, "产物不应为空")
+        self.assertEqual(p.suffix.lower(), ".mp4")
+        p.unlink(missing_ok=True)
+
+    def test_missing_key_error_mentions_local_escape(self):
+        """第三方 provider 缺 Key 时，报错必须告诉用户 local 这条出路。"""
+        os.environ["VIDEO_PROVIDER"] = "kling"
+        os.environ["VIDEO_API_KEY"] = "***"
+        with self.assertRaises(self.vg.VideoAPIError) as ctx:
+            self.vg.generate_short_video("测试", self._img, duration=2)
+        self.assertIn("VIDEO_PROVIDER=local", str(ctx.exception))
+
+    def test_local_missing_image_raises(self):
+        """素材不存在要报错，而不是产出一个空视频。"""
+        os.environ["VIDEO_PROVIDER"] = "local"
+        with self.assertRaises(self.vg.VideoAPIError):
+            self.vg.generate_short_video("测试", os.path.join(self._tmp, "nope.png"), duration=2)
+

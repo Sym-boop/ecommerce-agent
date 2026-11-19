@@ -5,7 +5,10 @@
         kling（默认）  可灵 Kling 图生视频协议
         aliyun         阿里云百炼（DashScope）图生视频协议，异步任务 + /api/v1/tasks 轮询
     - 全部通过环境变量配置，密钥不写死在代码里：
-        VIDEO_PROVIDER       供应商标识（kling / aliyun，默认 kling）
+        VIDEO_PROVIDER       供应商标识（kling / aliyun / local，默认 kling）
+                     local = 本地合成：把海报做成「缓慢推移 + 淡入淡出」的 MP4，
+                             不调用任何第三方模型、不需要 Key，用于无授权/离线演示
+                     注意 local 是**本地合成**，不是 AI 生成视频，别混着说
         VIDEO_API_KEY        供应商 API Key（缺失时返回友好错误，不阻塞开发联调）
         VIDEO_API_BASE_URL   供应商 API 地址（aliyun 填完整的 video-synthesis endpoint）
         VIDEO_API_MODEL      模型名（kling: kling-v1；aliyun: 如 wanx2.1-i2v-turbo）
@@ -34,7 +37,10 @@ if str(_ROOT) not in sys.path:
 try:
     from dotenv import load_dotenv
 
-    load_dotenv(_ROOT / ".env", override=True)
+    # override=False：**真实环境变量优先**，.env 只补空缺。
+    # 原来用 True，会让 .env 覆盖掉命令行/容器注入的值 —— 于是
+    # `VIDEO_PROVIDER=local python ...` 这类临时覆盖全部失效（踩过）。
+    load_dotenv(_ROOT / ".env", override=False)
 except Exception:  # noqa: BLE001
     pass
 
@@ -70,7 +76,9 @@ def _require_key(cfg: dict) -> None:
     if not cfg["key"] or set(cfg["key"]) <= {"*"}:
         raise VideoAPIError(
             "未配置视频生成 API Key，请在项目根目录 .env 中设置 VIDEO_API_KEY"
-            "（参考 .env.example 中的 VIDEO_* 配置项）。本模块使用独立的图生视频第三方 API。"
+            "（参考 .env.example 中的 VIDEO_* 配置项）。"
+            "若只需本地出片、不接第三方模型，可设 VIDEO_PROVIDER=local："
+            "该通道用内置 ffmpeg 把海报合成短视频，不需要 Key。"
         )
 
 
@@ -108,6 +116,8 @@ def _image_data_uri(image_path: str) -> str:
 # ---------------------------------------------------------------------------
 
 _ALIYUN_PROVIDERS = {"aliyun", "dashscope", "bailian", "aliyun-bailian"}
+# 本地合成通道：不需要 Key，用 imageio-ffmpeg 自带的 ffmpeg 把静图渲染成短视频
+_LOCAL_PROVIDERS = {"local", "ffmpeg", "offline"}
 
 
 def _submit_task(cfg: dict, prompt: str, image_path: str, duration: int) -> str:
@@ -257,6 +267,87 @@ def _poll_aliyun(cfg: dict, task_id: str) -> str:
     raise VideoAPIError(f"视频生成超时（>{int(cfg['poll_timeout'])}s），请稍后重试")
 
 
+# ---------------------------------------------------------------------------
+# 本地合成通道（VIDEO_PROVIDER=local）
+# ---------------------------------------------------------------------------
+
+def _ffmpeg_exe() -> str:
+    """取 ffmpeg 可执行文件路径。
+
+    优先用 `imageio-ffmpeg` 自带的静态编译版本——它随 pip 包一起分发，
+    Windows / Linux / Docker 都有对应二进制，**不需要系统安装 ffmpeg**。
+    这样部署环境不必为了一个兜底通道去装系统包。
+    """
+    try:
+        import imageio_ffmpeg
+
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception as exc:  # noqa: BLE001
+        raise VideoAPIError(
+            f"本地合成需要 imageio-ffmpeg（pip install imageio-ffmpeg）：{exc}"
+        ) from exc
+
+
+def local_available() -> bool:
+    """本地合成通道是否可用（前端据此决定是否给出「本地出片」选项）。"""
+    try:
+        import imageio_ffmpeg  # noqa: F401
+
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _generate_local(prompt: str, image_path: str, duration: int) -> str:
+    """把静图合成一段短视频：缓慢推进 + 淡入淡出。
+
+    **这是本地合成，不是 AI 生成视频。** 它的用途是：
+    - 没有第三方 Key 时，链路仍能产出可播放的成片（演示 / 联调）
+    - 素材本身已经是排版好的海报，推进一下比纯静态图更像广告位素材
+
+    产物：1080x1440 / 25fps / H.264 / 无音轨，几秒出片（实测 6 秒成片约 2.5 秒）。
+    """
+    import subprocess
+
+    src = Path(image_path)
+    if not src.exists():
+        raise VideoAPIError(f"素材图片不存在：{image_path}")
+
+    duration = max(2, min(int(duration or 6), 30))
+    fps = 25
+    fade = 0.5
+    exe = _ffmpeg_exe()
+    out_path = OUTPUT_DIR / f"{uuid.uuid4().hex[:8]}.mp4"
+
+    # zoompan 的 d=1 表示「每个输入帧只出一帧」，配合 -loop 1 形成平滑推进；
+    # 直接给 d=duration*fps 会与 -t 叠加导致时长翻倍（踩过）
+    vf = (
+        "scale=1080:1440:force_original_aspect_ratio=increase,"
+        "crop=1080:1440,"
+        f"zoompan=z='min(zoom+0.0007,1.12)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+        f":d=1:s=1080x1440:fps={fps},"
+        f"fade=t=in:st=0:d={fade},fade=t=out:st={duration - fade}:d={fade},"
+        "format=yuv420p"
+    )
+    cmd = [
+        exe, "-y", "-loop", "1", "-i", str(src), "-t", str(duration),
+        "-vf", vf, "-r", str(fps),
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+        "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-an",
+        str(out_path),
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              errors="replace", timeout=180)
+    except subprocess.TimeoutExpired as exc:
+        raise VideoAPIError(f"本地合成超时（>180s）：{exc}") from exc
+    if proc.returncode != 0:
+        raise VideoAPIError(f"本地合成失败（ffmpeg 退出码 {proc.returncode}）：{proc.stderr[-400:]}")
+    if not out_path.exists() or out_path.stat().st_size == 0:
+        raise VideoAPIError("本地合成失败：产物为空")
+    return str(out_path)
+
+
 def _download(url: str, out_path: Path) -> str:
     """下载成片到本地。"""
     import httpx
@@ -279,9 +370,13 @@ def generate_short_video(prompt: str, image_path: str, duration: int | None = No
     这是本模块的独立主入口，与文案 / 图文生成链路完全解耦。
     """
     cfg = _config()
-    _require_key(cfg)
     duration = duration or cfg["duration"]
 
+    # 本地合成通道：不校验 Key、不提交第三方任务，直接出片
+    if cfg["provider"] in _LOCAL_PROVIDERS:
+        return _generate_local(prompt, image_path, duration)
+
+    _require_key(cfg)
     task_id = _submit_task(cfg, prompt, image_path, duration)
     video_url = _poll_task(cfg, task_id)
 

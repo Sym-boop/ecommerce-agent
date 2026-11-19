@@ -46,3 +46,4 @@ openai>=1.30                # OpenAI 兼容 embedding 通道（可不用，但 i
 
 # ---------- 图文渲染 ----------
 playwright>=1.44            # 海报渲染。镜像里还需 playwright install chromium
+imageio-ffmpeg>=0.5         # 自带静态 ffmpeg 二进制：本地合成短视频不需要系统装 ffmpeg

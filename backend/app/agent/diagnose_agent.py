@@ -36,7 +36,7 @@ _ROOT = Path(__file__).resolve().parents[3]
 try:
     from dotenv import load_dotenv
 
-    load_dotenv(_ROOT / ".env", override=True)
+    load_dotenv(_ROOT / ".env", override=False)
 except Exception:  # noqa: BLE001
     pass
 
