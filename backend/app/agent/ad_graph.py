@@ -41,6 +41,7 @@ class AdGenState(TypedDict, total=False):
     sell_points: list       # 归一化后的卖点
     keyword: str            # 用户补充关键词
     platform: str           # 目标平台
+    template_id: str        # 结构模版（见 copy_templates），空 = 平台默认风格
     input_image_path: str   # 可选：用户上传的商品图片（本地路径）
     copy: dict              # {title, content, tags, platform}
     review: dict            # {copy_ok, violations, overridden?}
@@ -101,6 +102,7 @@ def gen_copy(state: AdGenState) -> dict:
             product_sell_points=points,
             product_category=product.get("category") or "通用",
             platform=platform,
+            template_id=str(state.get("template_id") or ""),
         ))
     except Exception as exc:  # noqa: BLE001
         logger.warning("文案生成失败: %s", exc)

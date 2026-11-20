@@ -28,6 +28,7 @@ from fastapi.responses import JSONResponse
 
 from app.agent import ad_graph
 from app.common import history_store, json_store, pipeline
+from app.common import copy_templates
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -110,6 +111,21 @@ def _save_upload(image: UploadFile | None) -> Path | None:
 # 文案生成 / 审查
 # ---------------------------------------------------------------------------
 
+@router.get("/templates")
+async def list_templates_api(platform: str = ""):
+    """爆款文案模版列表（平台 × 结构风格）。
+
+    前端广告生成页用它渲染下拉框。传 `platform` 只返回该平台的模版。
+    """
+    items = copy_templates.list_templates(platform)
+    return ok({
+        "platform": platform or "all",
+        "count": len(items),
+        "items": items,
+        "default_id": copy_templates.default_template_id(platform) if platform else "",
+    })
+
+
 @router.post("/copy")
 async def generate_copy_api(payload: dict | None = None):
     """生成文案（同步）；`regenerate=true` 时沿用原商品与关键词，只重出文案。
@@ -140,6 +156,8 @@ def generate_copy_core(body: dict):
         return fail(400, "请选择或自定义商品")
 
     platform = str(body.get("platform") or session.get("platform") or "xiaohongshu")
+    # 结构模版：前端下拉选，空则用平台默认风格（不加结构约束）
+    template_id = str(body.get("template_id") or session.get("template_id") or "").strip()
     attempt = int(session.get("attempt") or 0) + 1
     thread_id = f"{session['session_id']}-a{attempt}"
 
@@ -147,6 +165,7 @@ def generate_copy_core(body: dict):
         result = ad_graph.run_ad_generation(
             thread_id,
             product=product, keyword=keyword, platform=platform,
+            template_id=template_id,
             want_image=False, want_video=False,
         )
     except Exception as exc:  # noqa: BLE001
@@ -161,6 +180,7 @@ def generate_copy_core(body: dict):
             "product": result.get("product") or product,
             "keyword": keyword,
             "platform": platform,
+            "template_id": template_id,
             "copy": result.get("copy") or {},
             "review": result.get("review") or {},
             "attempt": attempt,

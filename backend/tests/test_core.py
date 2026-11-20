@@ -2727,3 +2727,65 @@ class TestLocalVideoProvider(unittest.TestCase):
         with self.assertRaises(self.vg.VideoAPIError):
             self.vg.generate_short_video("测试", os.path.join(self._tmp, "nope.png"), duration=2)
 
+class TestCopyTemplates(unittest.TestCase):
+    """爆款文案模版：平台 × 结构。
+
+    设计意图：平台管语气、模版管结构，两个维度正交。
+    这里锁三件事：
+        1. 模版按平台过滤正确，平台与模版不匹配时被忽略（不报错）
+        2. build_prompt 真的把结构约束注入了 system prompt
+        3. 不传模版时，prompt 与改造前一致（不破坏默认行为）
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(_ROOT))
+        from app.agent import copywriter
+        from app.common import copy_templates
+
+        cls.cw = copywriter
+        cls.tpl = copy_templates
+
+    def test_list_by_platform(self):
+        xhs = self.tpl.list_templates("xiaohongshu")
+        dy = self.tpl.list_templates("tiktok")
+        amz = self.tpl.list_templates("amazon")
+        self.assertGreaterEqual(len(xhs), 4)
+        self.assertGreaterEqual(len(dy), 3)
+        self.assertGreaterEqual(len(amz), 3)
+        for t in xhs:
+            self.assertEqual(t["platform"], "xiaohongshu")
+        # 不传平台返回全部
+        self.assertEqual(len(self.tpl.list_templates()), len(self.tpl.TEMPLATES))
+
+    def test_cross_platform_template_is_ignored(self):
+        """拿小红书模版去生成 Amazon，应被忽略而不是报错。"""
+        struct = self.tpl.structure_of("amazon", "xhs_pain")
+        self.assertEqual(struct, "")
+        # resolve 返回 None，get_template 仍能拿到（用于展示）
+        self.assertIsNone(self.tpl.resolve("amazon", "xhs_pain"))
+        self.assertIsNotNone(self.tpl.get_template("xhs_pain"))
+
+    def test_unknown_template_falls_back(self):
+        self.assertEqual(self.tpl.structure_of("xiaohongshu", "not_exist"), "")
+
+    def _input(self, platform="xiaohongshu", template_id=""):
+        return self.cw.CopyWriterInput(
+            product_name="测试商品", product_sell_points=["卖点一"],
+            product_category="水杯", platform=platform, template_id=template_id,
+        )
+
+    def test_prompt_injects_structure(self):
+        plain = self.cw.build_prompt(self._input(), [])
+        with_tpl = self.cw.build_prompt(self._input(template_id="xhs_pain"), [])
+        self.assertNotIn("【结构模版】", plain)
+        self.assertIn("【结构模版】", with_tpl)
+        self.assertGreater(len(with_tpl), len(plain))
+
+    def test_default_prompt_unchanged_without_template(self):
+        """不传模版时必须与平台默认 prompt 一致，避免影响既有行为。"""
+        prompt = self.cw.build_prompt(self._input(), [])
+        base = self.cw.PLATFORM_PROMPTS["xiaohongshu"]
+        self.assertTrue(prompt.startswith(base))
+        self.assertNotIn("结构模版", prompt)
+

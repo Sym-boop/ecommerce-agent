@@ -81,6 +81,28 @@
             </div>
           </div>
 
+          <el-form-item label="目标平台">
+            <el-radio-group v-model="platform" @change="onPlatformChange">
+              <el-radio-button value="xiaohongshu">小红书</el-radio-button>
+              <el-radio-button value="tiktok">抖音</el-radio-button>
+              <el-radio-button value="amazon">Amazon</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+
+          <el-form-item label="结构模版（决定开头怎么写、几段、有没有 CTA）">
+            <el-select v-model="templateId" placeholder="不选则用平台默认风格" clearable style="width: 100%">
+              <el-option
+                v-for="t in templates"
+                :key="t.id"
+                :label="`${t.name} · ${t.goal}`"
+                :value="t.id"
+              />
+            </el-select>
+            <div v-if="currentTemplate" class="tpl-hint">
+              {{ currentTemplate.goal }}
+            </div>
+          </el-form-item>
+
           <el-form-item label="关键词（可选，用于引导文案方向）">
             <el-input
               v-model="keyword"
@@ -443,7 +465,8 @@ import {
 } from '@element-plus/icons-vue'
 import {
   listProducts, createProduct, listHistory,
-  adgenCopy, adgenReview, adgenAsset, adgenAssetStatus, adgenImport,
+  adgenCopy,
+  getAdgenTemplates, adgenReview, adgenAsset, adgenAssetStatus, adgenImport,
   adgenSave, adgenPause, adgenDiscard,
 } from '@/api'
 import { formatTime, mediaUrl } from '@/utils/format'
@@ -481,6 +504,11 @@ const videoFile = ref(null)
 
 /* ---------------- 加载态 ---------------- */
 const loadingCopy = ref(false)
+// 目标平台 + 结构模版（模版按平台拉取，见 app.common.copy_templates）
+const platform = ref('xiaohongshu')
+const templateId = ref('')
+const templates = ref([])
+const currentTemplate = computed(() => templates.value.find((x) => x.id === templateId.value) || null)
 const imageGenerating = ref(false)
 const videoGenerating = ref(false)
 const saving = ref(false)
@@ -567,6 +595,24 @@ async function handleCreateProduct() {
 }
 
 /* ================= 文案生成 / 重新生成 ================= */
+async function loadTemplates() {
+  try {
+    const res = await getAdgenTemplates(platform.value)
+    templates.value = res?.items || []
+    // 切换平台后旧模版不适用，清掉选择
+    if (templateId.value && !templates.value.some((x) => x.id === templateId.value)) {
+      templateId.value = ''
+    }
+  } catch {
+    templates.value = []
+  }
+}
+
+function onPlatformChange() {
+  templateId.value = ''
+  loadTemplates()
+}
+
 async function generateCopy(regenerate) {
   if (!regenerate && !product.value) {
     ElMessage.warning('请先选择商品')
@@ -576,7 +622,12 @@ async function generateCopy(regenerate) {
   try {
     const payload = regenerate
       ? { session_id: sessionId.value, regenerate: true }
-      : { product: product.value, keyword: keyword.value }
+      : {
+          product: product.value,
+          keyword: keyword.value,
+          platform: platform.value,
+          template_id: templateId.value || '',
+        }
     const snap = await adgenCopy(payload)
     applySession(snap)
     mode.value = 'workspace'
@@ -787,9 +838,16 @@ function updateScrollState() {
 }
 
 onMounted(fetchProducts)
+onMounted(loadTemplates)
 </script>
 
 <style scoped>
+.tpl-hint {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
 .adgen :deep(.gen-card-head) {
   display: flex;
   align-items: center;

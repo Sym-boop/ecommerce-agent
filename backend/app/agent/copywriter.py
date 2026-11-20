@@ -30,6 +30,8 @@ except Exception:
 
 from pydantic import BaseModel
 
+from app.common import copy_templates
+
 # ============================================================
 # 一、Pydantic 输入 / 输出模型
 # ============================================================
@@ -40,6 +42,9 @@ class CopyWriterInput(BaseModel):
     platform: str  # xiaohongshu | tiktok | amazon
     language: str = "zh-CN"
     reference_count: int = 3
+    # 结构模版（见 app.common.copy_templates）。空表示用平台默认风格、不加结构约束。
+    # 平台与模版不匹配时会被忽略，而不是报错——见 copy_templates.resolve() 的说明。
+    template_id: str = ""
 
 
 class CopyWriterResult(BaseModel):
@@ -313,9 +318,23 @@ DEFAULT_PLATFORM = "xiaohongshu"
 
 
 def build_prompt(input_data: CopyWriterInput, references: List[dict[str, Any]]) -> str:
-    """根据平台生成对应的 system prompt + user prompt。"""
+    """根据平台 + 结构模版生成 system prompt，再拼 user prompt。
+
+    两个维度是正交的：
+        platform  → 语气/调性（PLATFORM_PROMPTS）
+        template  → 结构（copy_templates，写开头怎么写、几段、有没有 CTA）
+    模版只在平台匹配时生效；取不到就退回纯平台风格，不报错。
+    """
     plat = input_data.platform or DEFAULT_PLATFORM
     system_template = PLATFORM_PROMPTS.get(plat, PLATFORM_PROMPTS[DEFAULT_PLATFORM])
+
+    structure = copy_templates.structure_of(plat, getattr(input_data, "template_id", ""))
+    if structure:
+        system_template = (
+            f"{system_template}\n\n"
+            f"【结构模版】{structure}\n"
+            "以上结构要求优先于前面关于段落数量的描述。"
+        )
 
     snippets = _extract_snippets(references)
     ref_text = "\n".join(f"- {s}" for s in snippets) if snippets else "（暂无参考文案）"

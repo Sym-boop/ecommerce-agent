@@ -210,6 +210,11 @@ export function deleteHistory(recordId) {
  * 生成 / 重新生成文案（自动送文案审查）
  * payload: { session_id?, product, keyword?, platform?, regenerate? }
  */
+/** 爆款文案模版列表（平台 × 结构风格）；不传 platform 返回全部 */
+export function getAdgenTemplates(platform = '') {
+  return request.get('/adgen/templates', { params: platform ? { platform } : {} })
+}
+
 export function adgenCopy(payload) {
   return request.post('/adgen/copy', payload, { timeout: 120000 })
 }
