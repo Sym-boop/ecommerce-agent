@@ -2789,3 +2789,200 @@ class TestCopyTemplates(unittest.TestCase):
         self.assertTrue(prompt.startswith(base))
         self.assertNotIn("结构模版", prompt)
 
+class TestLocalVectorIndex(unittest.TestCase):
+    """本地向量索引（不加载真实模型，用假 embedding）。
+
+    真实 bge-m3 加载要 40 秒 + 2GB 内存，不适合放进单测。
+    这里用「字符哈希袋」做确定性假 embedding：同字符组成的文本相似度高，
+    足以验证索引构建、排序、缓存、指纹失效这些**与模型无关**的逻辑。
+    """
+
+    DIM = 16
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(_ROOT))
+        from app.common import embeddings, vector_store
+
+        cls.emb = embeddings
+        cls.vs = vector_store
+
+    @staticmethod
+    def _fake_embed(texts):
+        import hashlib
+
+        out = []
+        for text in texts:
+            vec = [0.0] * TestLocalVectorIndex.DIM
+            for ch in (text or ""):
+                h = int(hashlib.md5(ch.encode("utf-8")).hexdigest(), 16)
+                vec[h % TestLocalVectorIndex.DIM] += 1.0
+            if not any(vec):
+                vec[0] = 1.0
+            out.append(vec)
+        return out
+
+    def setUp(self):
+        self._tmp = tempfile.mkdtemp(prefix="dsh_vec_")
+        self._orig = self.emb.get_embed_fn
+        self.emb.get_embed_fn = lambda: self._fake_embed      # 注入假 embedding
+        self.docs = [
+            {"id": "1", "title": "保温杯推荐", "category": "水杯", "platform": "xiaohongshu", "text": "保温杯推荐"},
+            {"id": "2", "title": "保温杯测评", "category": "水杯", "platform": "tiktok", "text": "保温杯测评"},
+            {"id": "3", "title": "降噪耳机体验", "category": "蓝牙耳机", "platform": "xiaohongshu", "text": "降噪耳机体验"},
+        ]
+
+    def tearDown(self):
+        self.emb.get_embed_fn = self._orig
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def test_doc_text_prefers_title(self):
+        text = self.vs._doc_text({"title": "标题", "content": "正文", "text": "其它"})
+        self.assertTrue(text.startswith("标题"))
+        self.assertIn("正文", text)
+
+    def test_build_and_search(self):
+        idx = self.vs.LocalVectorIndex(self.docs, index_dir=Path(self._tmp))
+        info = idx.build()
+        self.assertTrue(info["built"])
+        self.assertEqual(info["dim"], self.DIM)
+        hits = idx.search("保温杯", top_k=2)
+        self.assertEqual(len(hits), 2)
+        self.assertIn("score", hits[0])
+        # 同字符重叠的「水杯」文档应排在耳机前面
+        self.assertEqual(hits[0]["category"], "水杯")
+
+    def test_platform_bonus_lifts_same_platform(self):
+        """同平台加权应把同平台文档提前，且**不做硬过滤**。
+
+        构造要点：两条文档正文完全相同、只有平台不同，这样余弦分相等，
+        排序差异只能由平台加成造成 —— 否则「文本相似度差」会被误判成
+        「加成生效/没生效」（第一版就是这么写错的）。
+        """
+        docs = [
+            {"id": "x", "title": "保温杯", "text": "保温杯", "category": "水杯", "platform": "xiaohongshu"},
+            {"id": "t", "title": "保温杯", "text": "保温杯", "category": "水杯", "platform": "tiktok"},
+        ]
+        idx = self.vs.LocalVectorIndex(docs, index_dir=Path(self._tmp))
+        idx.build()
+
+        # 加成关闭：分数相同，按原顺序
+        old_bonus = os.environ.get("VECTOR_PLATFORM_BONUS")
+        try:
+            os.environ["VECTOR_PLATFORM_BONUS"] = "0"
+            self.assertEqual(idx.search("保温杯", top_k=2, platform="tiktok")[0]["platform"], "xiaohongshu")
+
+            os.environ["VECTOR_PLATFORM_BONUS"] = "0.5"
+            hits = idx.search("保温杯", top_k=2, platform="tiktok")
+            self.assertEqual(hits[0]["platform"], "tiktok")
+            # 仍是软偏好：另一条也在结果里，没被过滤掉
+            self.assertEqual(len(hits), 2)
+        finally:
+            if old_bonus is None:
+                os.environ.pop("VECTOR_PLATFORM_BONUS", None)
+            else:
+                os.environ["VECTOR_PLATFORM_BONUS"] = old_bonus
+
+    def test_cache_roundtrip(self):
+        idx = self.vs.LocalVectorIndex(self.docs, index_dir=Path(self._tmp))
+        first = idx.build()
+        self.assertTrue(first["built"])
+        again = self.vs.LocalVectorIndex(self.docs, index_dir=Path(self._tmp)).build()
+        self.assertFalse(again["built"], "第二次应命中缓存而不是重建")
+        self.assertTrue(again["cached"])
+
+    def test_fingerprint_invalidates_on_doc_change(self):
+        self.vs.LocalVectorIndex(self.docs, index_dir=Path(self._tmp)).build()
+        changed = self.docs + [{"id": "4", "title": "新文档", "category": "水杯",
+                                "platform": "xiaohongshu", "text": "新文档"}]
+        info = self.vs.LocalVectorIndex(changed, index_dir=Path(self._tmp)).build()
+        self.assertTrue(info["built"], "文档变化后必须重建")
+
+    def test_empty_query_returns_empty(self):
+        idx = self.vs.LocalVectorIndex(self.docs, index_dir=Path(self._tmp))
+        idx.build()
+        self.assertEqual(idx.search("   "), [])
+
+    def test_no_embedding_raises_clearly(self):
+        self.emb.get_embed_fn = lambda: None
+        idx = self.vs.LocalVectorIndex(self.docs, index_dir=Path(self._tmp))
+        with self.assertRaises(RuntimeError) as ctx:
+            idx.build()
+        self.assertIn("embedding", str(ctx.exception))
+
+
+class TestEmbeddingsChain(unittest.TestCase):
+    """embedding 三层链路的配置判定（不加载模型）。"""
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(_ROOT))
+        from app.common import embeddings
+
+        cls.emb = embeddings
+
+    def test_placeholder_is_not_real(self):
+        self.assertFalse(self.emb._is_real("***"))
+        self.assertFalse(self.emb._is_real(""))
+        self.assertFalse(self.emb._is_real("   "))
+        self.assertTrue(self.emb._is_real("sk-abc"))
+
+    def test_describe_reports_source(self):
+        d = self.emb.describe()
+        self.assertIn("source", d)
+        self.assertIn(d["source"], {"api", "openai", "local"})
+        self.assertIn("model", d)
+
+class TestRerankToggle(unittest.TestCase):
+    """精排开关：关掉再打开必须还能加载。
+
+    这是一个真实踩过的坑（A/B 对照时第二组精排全部失效，表面看是「精排无增益」）：
+
+        _load() 里先 `_load_tried = True`，再判断 `_ENABLED`。
+        于是「开关关着」也被记成一次加载尝试，并把 `_load_error` 写成
+        「RAG_RERANK 已关闭」。之后再打开开关，`_load_tried` 已为 True，
+        直接返回 None —— 精排永远不生效，而且日志里只有一句「已关闭」，
+        看起来像是配置没开，不是 bug。
+
+    修法：`_ENABLED` 为 False 时直接返回，**不碰** `_load_tried` / `_load_error`。
+
+    这里只验证标志位，不加载真实模型（加载要 1GB 内存 / 25 秒，不适合单测）。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(_ROOT))
+        from app.common import rerank
+
+        cls.r = rerank
+
+    def setUp(self):
+        self._snap = (self.r._ENABLED, self.r._load_tried, self.r._load_error, self.r._model)
+
+    def tearDown(self):
+        self.r._ENABLED, self.r._load_tried, self.r._load_error, self.r._model = self._snap
+
+    def test_disabled_call_does_not_poison_state(self):
+        self.r._ENABLED = False
+        self.r._load_tried = False
+        self.r._load_error = None
+        self.r._model = None
+
+        self.assertIsNone(self.r._load())
+        self.assertFalse(self.r._load_tried, "「开关关着」不应被记为一次加载尝试")
+        self.assertIsNone(self.r._load_error, "「开关关着」不应被记成加载错误")
+
+    def test_enable_after_disable_still_attempts_load(self):
+        """关→开之后必须重新尝试（用「模型文件不全」以外的路径判断）。"""
+        self.r._ENABLED = False
+        self.r._load_tried = False
+        self.r._load_error = None
+        self.r._model = None
+        self.r._load()                      # 关着调一次
+
+        self.r._ENABLED = True
+        # 不真的加载：只检查它愿意再尝试（_load_tried 仍为 False）
+        self.assertFalse(self.r._load_tried,
+                         "打开开关后应仍处于「未尝试」状态，否则永远不会加载")
+        self.assertIsNone(self.r._load_error)
+

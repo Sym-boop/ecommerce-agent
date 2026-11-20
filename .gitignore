@@ -104,3 +104,6 @@ backend/data/app.db
 backend/data/media/
 data/stores/
 data/adgen_sessions.json
+面试问答-9题.md
+向量检索AB实测报告.md
+data/vector_index/

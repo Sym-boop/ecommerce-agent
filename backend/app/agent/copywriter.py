@@ -198,6 +198,76 @@ def retrieve_with_judge(category: str, platform: str, top_k: int = 3) -> Dict[st
     }
 
 
+def _recall(query: str, need: int) -> List[dict[str, Any]]:
+    """召回入口：按 `VECTOR_BACKEND` 选后端。
+
+    - `local`：本地向量索引（bge-m3 + numpy 余弦），不需要 Milvus / Docker
+    - `milvus`（默认）：走 Milvus，不可达时由其内部熔断降级到 TF-IDF
+    - `tfidf`：强制走字面检索（对照实验用）
+
+    为什么加 `local`：Milvus 要 19530 端口，而 Windows 没有 milvus-lite、
+    演示机也没装 Docker —— 于是「向量检索」在演示环境里永远跑不起来，
+    所有数字其实来自 TF-IDF 降级。本地索引把这一段补上。
+    """
+    import os as _os
+
+    backend = (_os.getenv("VECTOR_BACKEND", "milvus") or "milvus").strip().lower()
+
+    if backend == "local":
+        from app.common import vector_store
+
+        docs = _load_corpus()
+        index = vector_store.get_local_index(docs)
+        return index.search(query, top_k=need)
+
+    if backend == "tfidf":
+        # 注意：`_search_memory` 是 MilvusClient 的**实例方法**，不是模块函数。
+        # 之前按模块函数调 `_mc._search_memory(query, need)`，被外层 try 吞成
+        # 「空召回」——87 条查询全部返回空，看起来像「TF-IDF 效果为 0」，
+        # 其实是调用方式写错了（测量 bug，不是效果问题）。
+        from app.common import milvus_cli as _mc
+
+        client = _mc._get_instance()
+        # 用 `_memory_docs` 而不是 `count()`：`count()` 在熔断器未打开时会去调
+        # Milvus 的 get_collection_stats，**每次调用等一次连接超时（约 3 秒）**。
+        # 放在检索热路径里，87 条查询就变成 10 分钟（实测踩过）。
+        if not client._memory_docs:
+            client.seed_memory_from_disk()
+        if not client._memory_docs:
+            raise RuntimeError("TF-IDF 通道没有语料（seed_memory_from_disk 未生效）")
+        return client._search_memory(query, need)
+
+    from app.common.milvus_cli import search  # type: ignore
+
+    return search(query_text=query, top_k=need, filters=None)
+
+
+_CORPUS: Optional[List[dict]] = None
+
+
+def _load_corpus() -> List[dict]:
+    """读语料（`data/processed/copy_processed.json`），进程内缓存。
+
+    加缓存是因为本地索引每次重建都要读文件 + 算 embedding，
+    而语料在运行期基本不变。
+    """
+    global _CORPUS
+    if _CORPUS is not None:
+        return _CORPUS
+    path = _ROOT / "data" / "processed" / "copy_processed.json"
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        _CORPUS = data if isinstance(data, list) else data.get("items") or []
+        # 补 id：语料里没有 id 字段时用下标，索引与文档的对应关系要稳定
+        for i, doc in enumerate(_CORPUS):
+            doc.setdefault("id", f"doc-{i}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[copywriter] 读取语料失败（{path}）：{exc}", file=sys.stderr)
+        _CORPUS = []
+    return _CORPUS
+
+
 def retrieve_similar_copy(category: str, platform: str, top_k: int = 3) -> List[dict[str, Any]]:
     """从向量库召回与类目相关的爆款文案，并优先同平台。
 
@@ -219,10 +289,8 @@ def retrieve_similar_copy(category: str, platform: str, top_k: int = 3) -> List[
     既保住了平台风格偏好，又不会因语料稀疏拿到无关参考。
     """
     try:
-        from app.common.milvus_cli import search  # type: ignore
-
         need = max(top_k * 3, 9)
-        candidates = search(query_text=category, top_k=need, filters=None)
+        candidates = _recall(category, need)
         if not candidates:
             return []
 

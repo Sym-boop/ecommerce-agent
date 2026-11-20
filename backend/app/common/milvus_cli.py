@@ -182,69 +182,15 @@ class MilvusClientWrapper:
     # Embedding
     # ------------------------------------------------------------------
     def _load_embedding_fn(self):
-        # 1. 通用 OpenAI 兼容 embedding（优先）
-        emb_base = os.getenv("EMBEDDING_API_BASE", "").rstrip("/")
-        emb_key = os.getenv("EMBEDDING_API_KEY", "").strip()
-        emb_model = os.getenv("EMBEDDING_MODEL", "text-embedding-v4")
-        if emb_base and emb_key and not emb_key.startswith("sk-xxxx"):
-            try:
-                import httpx
+        """委托给 app.common.embeddings（单一事实来源）。
 
-                def _api_embed(texts: list[str]) -> list[list[float]]:
-                    url = f"{emb_base}/embeddings"
-                    headers = {
-                        "Authorization": f"Bearer {emb_key}",
-                        "Content-Type": "application/json",
-                    }
-                    body = {"model": emb_model, "input": texts, "encoding_format": "float"}
-                    with httpx.Client(timeout=30.0) as c:
-                        resp = c.post(url, headers=headers, json=body)
-                        resp.raise_for_status()
-                    data = resp.json()
-                    items = data.get("data", [])
-                    if not items:
-                        raise RuntimeError("embedding API 返回空")
-                    return [item["embedding"] for item in items]
+        原来这里是完整的三层链路实现，与本地向量检索需要的 embedding 重复。
+        复制两份的典型问题是「索引按 1024 维建、查询按 1536 维算」——
+        维度不一致不会报错，只会让相似度悄悄算错。所以统一到一处。
+        """
+        from app.common.embeddings import get_embed_fn
 
-                return _api_embed
-            except Exception:
-                pass
-
-        # 2. OpenAI 官方
-        openai_key = os.getenv("OPENAI_API_KEY", "").strip()
-        openai_base = os.getenv("OPENAI_BASE_URL", "").rstrip("/")
-        if openai_key and not openai_key.startswith("sk-xxxx"):
-            try:
-                from openai import OpenAI
-
-                def _openai_embed(texts: list[str]) -> list[list[float]]:
-                    client = OpenAI(api_key=openai_key, base_url=openai_base or None)
-                    resp = client.embeddings.create(
-                        model=emb_model,
-                        input=texts,
-                        encoding_format="float",
-                    )
-                    return [d.embedding for d in resp.data]
-
-                return _openai_embed
-            except Exception:
-                pass
-
-        # 3. HuggingFace 本地
-        try:
-            from langchain_huggingface import HuggingFaceEmbeddings
-
-            model_name = os.getenv("BGE_MODEL_NAME", "BAAI/bge-m3")
-            hf_embed = HuggingFaceEmbeddings(model_name=model_name)
-
-            def _bge_embed(texts: list[str]) -> list[list[float]]:
-                return hf_embed.embed_documents(texts)
-
-            return _bge_embed
-        except Exception:
-            pass
-
-        return None
+        return get_embed_fn()
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         # 惰性加载：embedding 模型（如 bge-m3）初始化很慢，首次加载在离线环境

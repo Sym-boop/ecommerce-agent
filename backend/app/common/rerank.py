@@ -69,17 +69,24 @@ def available() -> bool:
 
 
 def _load() -> Any:
-    """惰性加载 CrossEncoder，只尝试一次。"""
+    """惰性加载 CrossEncoder，只尝试一次（**但「开关关着」不计入这次尝试**）。"""
     global _model, _load_tried, _load_error
     if _model is not None:
         return _model
+
+    # 「功能关闭」不是「加载失败」。
+    #
+    # 原实现在这里先 `_load_tried = True` 再判断 `_ENABLED`，于是关着开关调一次
+    # 就把 `_load_error` 永久记成「RAG_RERANK 已关闭」，之后再打开开关也永远返回
+    # None（因为 `_load_tried` 已为 True）。A/B 对照时第二组精排全部失效，
+    # 表面看是「精排无增益」，实际是根本没跑（实测踩过，查了很久）。
+    if not _ENABLED:
+        return None
+
     if _load_tried:
         return None
     _load_tried = True
 
-    if not _ENABLED:
-        _load_error = "RAG_RERANK 已关闭"
-        return None
     if not available():
         _load_error = f"模型文件不全：{_MODEL_DIR}"
         logger.warning("Reranker 不可用（%s），检索将保持召回顺序", _load_error)
